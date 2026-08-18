@@ -1,6 +1,6 @@
 # State: LLM API 服务评测管理平台
 
-**最后更新：** 2026-08-18
+**最后更新：** 2026-08-18（Phase 1 规划完成）
 
 ## 项目参考
 
@@ -20,7 +20,7 @@
 
 ### Phase 1: 基础设施与数据模型
 
-**状态：** 待开始  
+**状态：** 计划完成，待执行（Ready to execute，3 个计划 / 2 个 Wave）  
 **目标：** 建立 PostgreSQL schema、核心领域模型和 FastAPI 骨架
 
 **进度：**
@@ -38,7 +38,8 @@
 ## 项目时间线
 
 - **2026-08-18**: 项目初始化，创建 PROJECT.md、REQUIREMENTS.md、ROADMAP.md
-- **下一步**: 开始 Phase 1
+- **2026-08-18**: Phase 1 规划完成（研究 → 计划 → 校验通过，3 计划 / 2 Wave）
+- **下一步**: 执行 Phase 1
 
 ## 关键指标
 
@@ -70,10 +71,8 @@
 
 ## 下一步行动
 
-1. 执行 `/gsd-plan-phase 1` 创建 Phase 1 详细计划
-2. 设计数据库 schema 和 ERD
-3. 搭建 FastAPI + React 开发环境
-4. 配置 Alembic 数据库迁移
+1. 执行 `/gsd-execute-phase 1` 执行 Phase 1 的 3 个计划（Wave 1 先行，含命名决策人工 checkpoint）
+2. 执行后运行 `/gsd-verify-work 1` 验证交付
 
 ---
 *状态文件由 GSD 工作流自动维护*
