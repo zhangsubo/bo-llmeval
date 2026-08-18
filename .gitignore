@@ -1,2 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+*.egg-info/
+
+# 环境变量（安全基线：.env 永不入库）
+.env
+
+# 本地数据卷残留
+pgdata/
+
+# 系统文件
 .DS_Store
 未命名文件夹/

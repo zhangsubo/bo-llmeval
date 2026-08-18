@@ -1,0 +1,58 @@
+# 开发环境编排：db / db-test / migrate / app 四服务
+# 迁移只由 migrate 服务（或手工 alembic 命令）执行，应用启动路径绝不跑迁移
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: evalplat
+      POSTGRES_PASSWORD: evalplat
+      POSTGRES_DB: evalplat
+      TZ: UTC
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U evalplat"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  db-test:
+    image: postgres:16
+    profiles: ["test"]
+    environment:
+      POSTGRES_USER: evalplat
+      POSTGRES_PASSWORD: evalplat
+      POSTGRES_DB: evalplat_test
+      TZ: UTC
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U evalplat"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  migrate:
+    build: .
+    command: alembic upgrade head
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+
+  app:
+    build: .
+    command: uvicorn evalplat.main:create_app --factory --host 0.0.0.0 --port 8000 --reload
+    env_file: .env
+    volumes:
+      - ./src:/app/src
+    ports:
+      - "8000:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  pgdata:

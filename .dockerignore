@@ -1,0 +1,13 @@
+# 构建上下文排除：避免把本地 venv / 数据卷 / git 历史打进镜像
+.venv/
+pgdata/
+.git/
+.pytest_cache/
+__pycache__/
+.env
+.DS_Store
+.planning/
+docs/
+prd/
+research/
+review/
