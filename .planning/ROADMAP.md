@@ -43,6 +43,13 @@
 - 基础错误处理和日志配置
 - 健康检查端点
 
+**Plans:** 3 plans
+
+Plans:
+- [ ] 01-01-PLAN.md — 脚手架 + 端到端 tracer：compose 开发环境、命名约定锁定（one-way checkpoint）、初始迁移（suppliers + runs 队列预埋）、FastAPI 骨架与 /healthz /readyz、EXEC-01 SKIP LOCKED 冒烟
+- [ ] 01-02-PLAN.md — 全量数据模型：补齐 13 个实体模型、0001 迁移定稿为 17 表、inspect 断言 + 迁移往返 + alembic check 零 diff
+- [ ] 01-03-PLAN.md — suppliers CRUD 样板 + 错误/日志安全回归测试 + 人工验收（compose 冷启动 + curl）
+
 **依赖：** 无
 
 **风险：**
