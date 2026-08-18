@@ -569,27 +569,33 @@ def create_supplier(payload: SupplierCreate, db: Session = Depends(get_db)):
 
 **A4/A5/A6 建议在 plan 阶段或 discuss 中一次性向用户确认。**
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **生产/外部 PostgreSQL 的实际版本是多少？**
+> 以下 4 条已全部在 plan 阶段实质解决：方案假设固化于 01-01-PLAN「计划假设」节，并经 01-01 Task 1（checkpoint:decision，one-way 门控）统一确认。executor 不得推翻。
+
+1. **生产/外部 PostgreSQL 的实际版本是多少？** — RESOLVED
    - What we know: PRD 要求 14+，本机 psql client 为 18.6，compose 建议 postgres:16
    - What's unclear: 生产外部 PostgreSQL 的版本（影响 `gen_random_uuid()`（13+ 内置）、`percentile_cont` 并行行为等假设）
    - Recommendation: 以 14 为最低兼容线写迁移（本方案所有特性 14 均支持），compose 用 16；部署文档注明对齐
+   - **Resolution:** 采纳 Recommendation，固化为 01-01-PLAN 计划假设「A-PG 版本」（迁移按 PG 14 最低兼容线编写，docker-compose 用 postgres:16），由 01-01 Task 1 checkpoint 决策项 (4) 门控确认。
 
-2. **requests/attempts 的保留粒度与 ITL 序列存储**
+2. **requests/attempts 的保留粒度与 ITL 序列存储** — RESOLVED
    - What we know: PRD 要求请求级保存 ITL 序列（§9.1），10M 请求容量基线
    - What's unclear: `itl_series` 放 `attempts` 行内 JSONB 还是独立子表；长输出（8K token）ITL 序列约数千浮点，行内 JSONB 会让行变宽
    - Recommendation: Phase 1 按行内 JSONB 建列（查询模式永远是按 attempt 取整列）；Phase 5 实测体积后如需拆分再迁移
+   - **Resolution:** 采纳 Recommendation，固化为 01-01-PLAN 计划假设「A-ITL」（attempts.itl_series 行内 JSONB，01-02 Task 1 第 12 步建列），Phase 5 实测后再评估。
 
-3. **Phase 1 CRUD 范围确认**
+3. **Phase 1 CRUD 范围确认** — RESOLVED
    - What we know: 成功标准 4 要求"基础 CRUD API 端点可通过 Postman/curl 调用"
    - What's unclear: 一组样板（suppliers）是否足够，还是要覆盖 connections/model_deployments
    - Recommendation: 默认 suppliers 一组；若计划阶段认为标准 4 隐含多组，connections 可作为第二组（含 base_url 规范化，但不含加密——加密属 Phase 2）
+   - **Resolution:** 采纳默认方案（suppliers 一组），固化为 01-01-PLAN 计划假设「A-CRUD 范围」，由 01-03-PLAN Task 1 实现；connections 等其余实体 CRUD 随各自阶段实现。
 
-4. **审计/系统设置等"后续阶段表"是否进初始迁移**
+4. **审计/系统设置等"后续阶段表"是否进初始迁移** — RESOLVED
    - What we know: 一次性建全（本研究推荐）vs 每阶段增量迁移
    - What's unclear: 团队对初始迁移体积的接受度
    - Recommendation: 建全。15 张表的 DDL 在一个 revision 中可审阅；避免 Phase 10 才发现 audit_events 表结构与早期写入路径冲突
+   - **Resolution:** 采纳 Recommendation，固化为 01-02-PLAN 计划假设（0001 初始迁移一次建全 15 类实体共 17 张表，01-02 Task 2 定稿）。
 
 ## Environment Availability
 
