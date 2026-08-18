@@ -1,3 +1,16 @@
+---
+gsd_state_version: 1.0
+milestone: v1.0
+milestone_name: milestone
+status: unknown
+last_updated: "2026-08-18T07:25:12.446Z"
+progress:
+  total_phases: 1
+  completed_phases: 0
+  total_plans: 3
+  completed_plans: 0
+---
+
 # State: LLM API 服务评测管理平台
 
 **最后更新：** 2026-08-18（Phase 1 规划完成）
@@ -24,6 +37,7 @@
 **目标：** 建立 PostgreSQL schema、核心领域模型和 FastAPI 骨架
 
 **进度：**
+
 - [ ] 数据库 schema 设计
 - [ ] SQLAlchemy ORM 模型
 - [ ] FastAPI 应用骨架
@@ -76,3 +90,7 @@
 
 ---
 *状态文件由 GSD 工作流自动维护*
+
+## Decisions
+
+- [Phase ?]: 01-01 Task 1 决策确认（用户 option-a 全部采纳研究推荐）：(1) MetaData 命名约定 ix_/uq_/ck_/fk_/pk_ 五段式；(2) 表名/字段名/状态枚举取值英文，docstring/注释/用户可见错误消息中文；(3) 同步 SQLAlchemy engine + Session；(4) 迁移按 PG 14 最低兼容线编写，docker-compose 使用 postgres:16
