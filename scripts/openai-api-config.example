@@ -1,0 +1,13 @@
+# 复制为同目录 openai-api-config，再填写常用配置。
+# 三种接口共用这些配置；运行时选择 chat/completions、responses 或 video。
+# 每组 BASE_URL 和 API_KEY 必须同时填写；空白组不会出现在选择菜单。
+# 复制以下三行并将编号改为 3、4……即可添加更多组。
+# 值按字面读取，不执行 shell、不展开环境变量；可使用单引号或双引号。
+
+NAME1="常用配置一"
+BASE_URL1=
+API_KEY1=
+
+NAME2="常用配置二"
+BASE_URL2=
+API_KEY2=
