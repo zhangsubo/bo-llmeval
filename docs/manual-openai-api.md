@@ -2,20 +2,23 @@
 
 在 `bo-llmeval` 项目根目录运行 `python3 scripts/test-openai-api.py`，选择常用配置或临时输入 base URL、key，
 再选择接口类型并输入 model ID 和提示词。Python 3.11+，无需安装依赖，临时输入 key 时隐藏回显。
-菜单：1 为 `chat/completions`，2 为 `responses`，3 为 `video`（回车默认视频）。
+菜单：1 为 `chat/completions`，2 为 `responses`，3 为 `video`（回车默认视频），4 为 `seedance`（火山方舟原生）。
 选择 video 后会先显示分辨率菜单：1 为 720p（回车默认）、2 为 1080p、3 为 4K；
 也可直接输入档位名称。选择以 `resolution` 字段发送，不同时发送 `size`。
 `--resolution` 或 `--size` 已指定时跳过菜单，`--task-id` 查询和文本接口也不显示此菜单。
-video 新建测试还会询问是否使用自带参考视频：1 为不使用（回车默认），2 为使用。
-选择 2 后输入 HTTP(S) 视频 URL，再输入 model ID 和提示词。URL 需能被上游访问，不是本地文件路径。
+video 新建测试还会显示参考素材菜单：1 为不使用（回车默认），2 为视频，3 为图片，4 为音频。
+可多选，用逗号分隔，例如 `3,4` 表示图片和音频；随后分别输入素材地址，再输入 model ID 和提示词。
+三种素材均支持 HTTP(S) URL 或 `asset://asset-<素材ID>`，请按素材实际类型选择。
+HTTP(S) 地址需能被上游访问；asset 地址引用上游已有素材，不是本地文件路径。
 输入无效选项或 URL 会重新询问，尚未发送生成请求。
-已指定 `--reference-video URL` 或 `--no-reference-video` 时跳过参考视频菜单；
-文本接口和 `--task-id` 查询也不会询问参考视频。
+已指定任一 `--reference-video`、`--reference-image`、`--reference-audio` 参数，或 `--no-reference` 时跳过素材菜单。
+兼容旧参数 `--no-reference-video`：跳过菜单且不使用参考视频，仍可显式传入图片或音频。
+文本接口和 `--task-id` 查询也不会询问参考素材。
 本工具从 peopleopen 迁入，用于单次手工诊断；测试纳入本项目 `tests/`。
 它不写入平台任务/连接/数据库，不取代 EvalScope 的正式评测流程。
 默认读取脚本同目录的 `openai-api-config`，即 `scripts/openai-api-config`。
 路径相对于脚本位置解析，不受运行时工作目录影响；`--config` 显式指定的文件优先，不合并多个文件。
-字段使用 `NAME编号`、`BASE_URL编号`、`API_KEY编号`，三种接口共用配置。
+字段使用 `NAME编号`、`BASE_URL编号`、`API_KEY编号`，四种接口共用配置结构；不同服务需各自配置正确的地址和 key。
 
 也可直接指定接口类型，跳过接口菜单：
 
@@ -31,6 +34,66 @@ python3 scripts/test-openai-api.py --api-type responses --no-stream
 | chat/completions | POST /v1/chat/completions | JSON：model、messages、stream=true、stream_options.include_usage=true | SSE 增量、文本、usage、TTFT 和耗时 |
 | responses | POST /v1/responses | JSON：model、input、stream=true | SSE 增量、文本、usage、TTFT 和耗时 |
 | video | POST /v1/videos | JSON：model、prompt/content、seconds/duration、size/resolution、ratio、generate_audio、watermark | 任务轮询、完成耗时、下载地址、Token 用量、自动下载视频 |
+| seedance | POST/GET/DELETE /api/v3/contents/generations/tasks[/id] | 方舟原生 JSON：model、content、duration、resolution 等 | 创建、查询、列表、取消/删除；轮询、用量、视频下载 |
+
+## 火山方舟 Seedance 原生接口
+
+选择菜单 `4` 后可选择创建、查询、列表或取消/删除。直接指定 `--api-type seedance` 时，
+默认创建；带 `--task-id` 则默认查询，也可用 `--action` 显式选择。
+原有 `video` 类型继续使用中转平台协议，单独使用 `--task-id` 仍选择 `video`；方舟任务必须显式选择 `seedance`。
+
+使用原有配置文件的独立一组配置，填写方舟 API key，以及公开 Base URL
+`https://ark.cn-beijing.volces.com/api/v3`。也接受该官方域名根地址和完整的
+`/api/v3/contents/generations/tasks` 地址；自定义网关地址需保留正确的版本前缀。
+配置格式仍是 `NAME编号`、`BASE_URL编号`、`API_KEY编号`；环境变量仍使用
+`OPENAI_BASE_URL`、`OPENAI_API_KEY`、`OPENAI_MODEL_ID`，不自动读取 `ARK_API_KEY`。
+模型 ID / 推理接入点 ID 由用户输入，不预设某个 Seedance 版本。
+
+```bash
+# 创建并轮询，成功后自动下载；Model ID 按提示输入或通过 OPENAI_MODEL_ID 提供
+python3 scripts/test-openai-api.py --api-type seedance --prompt '小猫在花园里散步' --resolution 720p --no-reference
+# 只创建并保存任务 ID，不等待完成
+python3 scripts/test-openai-api.py --api-type seedance --prompt '小猫在花园里散步' --resolution 720p --no-reference --no-wait
+# 查询已有任务并等待完成；不需要 model、提示词或素材输入
+python3 scripts/test-openai-api.py --api-type seedance --task-id 'cgt-你的任务ID'
+# 单次查询；尚未完成时立即退出，已成功时仍下载视频
+python3 scripts/test-openai-api.py --api-type seedance --task-id 'cgt-你的任务ID' --no-wait
+# 查询一页任务，可按状态、模型/推理接入点和多个任务 ID 筛选
+python3 scripts/test-openai-api.py --api-type seedance --action list --page-num 1 --page-size 10 --filter-status succeeded
+python3 scripts/test-openai-api.py --api-type seedance --action list --filter-model 'ep-你的接入点ID' --filter-task-id 'cgt-任务一' --filter-task-id 'cgt-任务二'
+# 明确发起取消/删除，立即发送 DELETE；执行前确认任务 ID
+python3 scripts/test-openai-api.py --api-type seedance --action delete --task-id 'cgt-你的任务ID'
+# 首尾帧输入；URL 可替换为可用的 asset://asset-... 素材标识
+python3 scripts/test-openai-api.py --api-type seedance --first-frame 'https://example.com/first.jpg' --last-frame 'https://example.com/last.jpg'
+```
+
+创建使用 `content` 数组；`--seconds` 和 `--duration` 都转成整数 `duration`，默认 5 秒。
+本脚本目前只接受正整数秒；具体时长和分辨率是否支持由所选模型校验。
+用 `--resolution` 指定分辨率，方舟模式拒绝 `--size`。默认比例 16:9、请求音频、关闭水印，
+可用既有布尔参数调整。`--reference-image/video/audio` 沿用原有 HTTP(S)/asset 素材输入及角色；
+`--first-frame`/`--last-frame` 使用对应的图片角色，尾帧必须同时提供首帧，且不能与参考素材混用。
+新建仍需提示词；脚本不自动降档、不重新创建、不重试请求。
+协议字段依据[官方创建文档](https://docs.volcengine.com/docs/ark/create-video-generation-task-api?lang=zh)。
+
+查询使用响应顶层 `status`、`usage` 和 `content.video_url`。创建仅返回 `id` 也会继续查询；
+`queued`/`running` 继续轮询，失败/取消/过期停止并保留响应。
+下载链接请求不携带 API key；成功却缺少链接时标记 `completed_download_failed`，不会探测兼容接口的 `/videos/{id}/content`。
+参见[官方查询文档](https://docs.volcengine.com/docs/ark/get-video-generation-task-api?lang=zh)。
+
+列表仅查询指定页，显示总数及任务 ID、状态、模型，完整响应保存到报告，不批量下载。
+分页和筛选参数仅用于 `--action list`，多个任务 ID 按重复的 `filter.task_ids` 参数发送。
+参见[官方列表文档](https://docs.volcengine.com/docs/ark/list-video-generation-tasks-api?lang=zh)。
+
+`delete` 共用官方取消/删除接口：排队任务取消，已成功/失败/过期任务删除记录，运行中任务不支持取消。
+成功响应通常为 HTTP 200 `{}`，脚本也兼容成功的空响应；HTTP/业务错误保存后退出，不自动重试。
+参见[官方取消/删除文档](https://docs.volcengine.com/docs/ark/cancel-or-delete-video-generation-tasks-api)。
+
+方舟结果默认保存到 `scripts/test-results/seedance/`。退出码 0 表示本次操作成功：
+`submitted` 仅代表创建已受理；单次查询的 `queued`/`running` 不代表视频完成。
+退出码 1 表示失败/超时，2 表示生成成功但下载失败，130 表示中断。
+本功能通过本地模拟 HTTP 测试，尚未执行方舟线上付费生成验收。
+
+## 原有文本与兼容视频行为
 
 文本和视频新建测试时均需输入提示词，不使用默认内容；输入不能为空。
 也可通过 `--prompt "你的提示词"` 直接指定，跳过提示词输入。
@@ -80,16 +143,29 @@ base URL 可以是域名根地址、
 `--seconds` 与 `--duration` 二选一；`--size` 与 `--resolution` 二选一。
 `size` 用于选择分辨率档位，不保证最终像素宽高；需要固定画面比例时用 `--ratio`。
 `--generate-audio` / `--no-generate-audio`、`--watermark` / `--no-watermark` 发送真正的 JSON 布尔值。
-可用 `--content` 改为 content 文本数组；使用 `--reference-image URL` 或 `--reference-video URL`
-会自动构造 content 数组及 `reference_image` / `reference_video` role，各参数可重复指定。
-参考素材必须是上游可访问的 HTTP(S) URL，脚本不上传本地素材。
-交互选择参考视频与 `--reference-video` 使用同一请求格式，提示词和视频会一起发送：
+可用 `--content` 改为 content 文本数组；使用 `--reference-image URL`、`--reference-video URL` 或 `--reference-audio URL`
+会自动构造 content 数组，各参数可重复指定，也可组合使用。
+
+| 素材 | type 及地址字段 | role |
+| --- | --- | --- |
+| 视频 | `video_url` / `video_url.url` | `reference_video` |
+| 图片 | `image_url` / `image_url.url` | `reference_image` |
+| 音频 | `audio_url` / `audio_url.url` | `reference_audio` |
+
+三种素材均可使用上游能访问的 HTTP(S) URL 或 `asset://asset-<素材ID>`。
+asset 地址原样写入对应字段；脚本不下载该素材，也不上传本地文件，不根据素材 ID 推断类型。
+素材 ID 是否存在及当前账号是否有权使用，由上游校验。asset 地址不包含账号密码、路径、查询参数或 fragment。
+`--reference-audio` 是输入参考音频，`--generate-audio` 则控制输出视频是否生成音频。
+根据 [Seedance 官方说明](https://docs.volcengine.com/docs/ark/create-video-generation-task-api?lang=zh)，Seedance 2.0 的参考音频必须至少搭配一张参考图片或一段参考视频。
+脚本不对其他模型统一施加此限制，实际支持范围以平台开通能力为准。
+交互选择与命令行参数使用同一请求格式，例如图片和音频一起发送：
 
 ```json
 {
   "content": [
     {"type": "text", "text": "你输入的提示词"},
-    {"type": "video_url", "video_url": {"url": "https://example.com/reference.mp4"}, "role": "reference_video"}
+    {"type": "image_url", "image_url": {"url": "asset://asset-image-example"}, "role": "reference_image"},
+    {"type": "audio_url", "audio_url": {"url": "asset://asset-audio-example"}, "role": "reference_audio"}
   ]
 }
 ```
@@ -103,8 +179,12 @@ python3 scripts/test-openai-api.py --api-type video --content --duration 5 --res
 # 将素材地址替换为实际可访问的 URL；提示词仍由你输入
 python3 scripts/test-openai-api.py --api-type video --reference-image 'https://example.com/reference-image.jpg'
 python3 scripts/test-openai-api.py --api-type video --reference-video 'https://example.com/reference.mp4'
+# 使用上游已有的视频素材；替换为账号可用的素材 ID
+python3 scripts/test-openai-api.py --api-type video --reference-video 'asset://asset-example'
+# 同时使用图片和音频素材；替换为账号可用的素材 ID
+python3 scripts/test-openai-api.py --api-type video --reference-image 'asset://asset-image-example' --reference-audio 'asset://asset-audio-example'
 # 跳过两个视频配置菜单；model ID 和提示词按原方式提供
-python3 scripts/test-openai-api.py --api-type video --resolution 720p --no-reference-video
+python3 scripts/test-openai-api.py --api-type video --resolution 720p --no-reference
 ```
 `--request-timeout` 是网络操作超时，慢速响应可能令实际总等待略超出上限。
 

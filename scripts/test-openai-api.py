@@ -3,8 +3,9 @@
 
 运行：python3 scripts/test-openai-api.py
 自动读取脚本同目录 openai-api-config。
-选择配置、接口类型；video 选择分辨率和是否使用参考视频，再输入 model ID 和提示词。
-支持 chat/completions、responses、video；--api-type 可直接指定类型。
+选择配置、接口类型；video 选择分辨率和参考素材类型（视频、图片、音频），再输入 model ID 和提示词。
+支持 chat/completions、responses、video、seedance；--api-type 可直接指定类型。
+seedance 为火山方舟原生接口；--action create/query/list/delete，--no-wait 不轮询。
 --task-id 查询已有视频任务，跳过创建、接口类型菜单、Model ID 和提示词输入。
 视频按 Seedance 指南发送 JSON，默认查询 /video/generations/{id} 获取下载地址和 Token 用量。
 --video-query-api videos 可手动使用 /videos/{id} 查询路径。
@@ -41,11 +42,26 @@ def positive_number(value):
     return number
 
 
-def reference_url(value):
-    url = parse.urlsplit(value)
-    if url.scheme not in ('http', 'https') or not url.hostname or url.username or url.password or url.fragment:
-        raise argparse.ArgumentTypeError('参考素材必须是无账号密码和 fragment 的 HTTP(S) URL')
+def validate_task_id(value):
+    value = value.strip()
+    if not value or value in ('.', '..') or any(ord(c) < 32 or ord(c) == 127 for c in value):
+        raise ValueError('task ID 不可为空、路径点或包含控制字符')
     return value
+
+
+def reference_url(value):
+    # asset 不包含可判断媒体类型的信息；类型由用户选择，标识原样传给上游。
+    if re.fullmatch(r'asset://asset-[A-Za-z0-9][A-Za-z0-9_-]*', value):
+        return value
+    try:
+        url = parse.urlsplit(value)
+        if (url.scheme in ('http', 'https') and url.hostname and not url.username and
+                not url.password and not url.fragment and not any(c.isspace() for c in value)):
+            return value
+    except ValueError:
+        pass
+    raise argparse.ArgumentTypeError(
+        '参考素材必须是 HTTP(S) URL 或 asset://asset-<素材ID>；不可包含账号密码、fragment 或本地文件路径')
 
 
 def video_payload(args, model):
@@ -60,14 +76,29 @@ def video_payload(args, model):
         payload['size'] = args.size
     else:
         payload['resolution'] = args.resolution or '720p'
-    if args.content or args.reference_image or args.reference_video:
+    if args.content or args.reference_image or args.reference_video or args.reference_audio:
         payload['content'] = [{'type': 'text', 'text': args.prompt}]
-        for kind, urls in (('image', args.reference_image), ('video', args.reference_video)):
+        for kind, urls in (('image', args.reference_image), ('video', args.reference_video),
+                           ('audio', args.reference_audio)):
             for url in urls:
                 payload['content'].append({'type': kind + '_url', kind + '_url': {'url': url},
                                            'role': 'reference_' + kind})
     else:
         payload['prompt'] = args.prompt
+    return payload
+
+
+def seedance_payload(args, model):
+    """方舟原生协议不接受兼容接口的 prompt/seconds/size 字段。"""
+    payload = video_payload(args, model)
+    payload.pop('prompt', None)
+    payload.pop('seconds', None)
+    payload['duration'] = int(args.duration if args.duration is not None else
+                              args.seconds if args.seconds is not None else 5)
+    payload.setdefault('content', [{'type': 'text', 'text': args.prompt}])
+    for role, url in (('first_frame', args.first_frame), ('last_frame', args.last_frame)):
+        if url:
+            payload['content'].append({'type': 'image_url', 'image_url': {'url': url}, 'role': role})
     return payload
 
 
@@ -78,12 +109,12 @@ def normalize_base(value):
     if url.username or url.password or url.query or url.fragment:
         raise ValueError("base URL 不可包含账号密码、查询参数或 fragment")
     path = url.path.rstrip("/")
-    for endpoint in ('/chat/completions', '/responses', '/video/generations', '/videos'):
+    for endpoint in ('/contents/generations/tasks', '/chat/completions', '/responses', '/video/generations', '/videos'):
         if path.endswith(endpoint):
             path = path[:-len(endpoint)]
             break
     if not path:
-        path = "/v1"
+        path = '/api/v3' if url.hostname == 'ark.cn-beijing.volces.com' else '/v1'
     return parse.urlunsplit((url.scheme, url.netloc, path, "", ""))
 
 
@@ -174,10 +205,20 @@ def select_credentials(profiles):
 
 
 def select_api_type():
-    options = {'1': 'chat/completions', '2': 'responses', '3': 'video'}
-    print('请选择接口类型：\n  1. chat/completions\n  2. responses\n  3. video')
+    options = {'1': 'chat/completions', '2': 'responses', '3': 'video', '4': 'seedance'}
+    print('请选择接口类型：\n  1. chat/completions\n  2. responses\n  3. video\n  4. seedance（火山方舟原生）')
     while True:
         choice = input('输入编号（默认 3）：').strip() or '3'
+        if choice in options:
+            return options[choice]
+        print('编号无效，请重新选择。')
+
+
+def select_seedance_action():
+    options = {'1': 'create', '2': 'query', '3': 'list', '4': 'delete'}
+    print('请选择 Seedance 操作：\n  1. 创建（默认）\n  2. 查询\n  3. 列表\n  4. 取消/删除')
+    while True:
+        choice = input('输入编号（默认 1）：').strip() or '1'
         if choice in options:
             return options[choice]
         print('编号无效，请重新选择。')
@@ -195,21 +236,31 @@ def select_video_resolution():
         print('选项无效，请选择 1/2/3 或 720p/1080p/4K。')
 
 
-def select_reference_videos():
-    print('是否使用自带参考视频？\n  1. 不使用（默认）\n  2. 使用，填写视频 URL')
+def select_reference_media():
+    references = {'video': [], 'image': [], 'audio': []}
+    options = {'2': ('video', '视频'), '3': ('image', '图片'), '4': ('audio', '音频')}
+    print('请选择参考素材类型：\n  1. 不使用（默认）\n  2. 视频\n  3. 图片\n  4. 音频')
+    print('可多选，用逗号分隔，例如 3,4 表示图片和音频。请按素材实际类型选择。')
     while True:
         choice = input('输入编号（默认 1）：').strip().lower() or '1'
         if choice in ('1', 'n', 'no', '否'):
-            return []
-        if choice in ('2', 'y', 'yes', '是'):
+            return references
+        if choice in ('y', 'yes', '是'):
+            choice = '2'
+        choices = list(dict.fromkeys(re.split(r'[,，\s]+', choice)))
+        if choices and all(item in options for item in choices):
             break
-        print('选项无效，请选择 1（不使用）或 2（使用）。')
-    while True:
-        value = input('参考视频 URL（HTTP/HTTPS）：').strip()
-        try:
-            return [reference_url(value)]
-        except (argparse.ArgumentTypeError, ValueError):
-            print('请输入有效的 HTTP(S) 视频 URL，不可使用本地文件路径或包含账号密码。')
+        print('选项无效，请选择 1（不使用）或 2/3/4（可多选）。')
+    for choice in choices:
+        kind, label = options[choice]
+        while True:
+            value = input(f'参考{label}地址（HTTP/HTTPS 或 asset://asset-<素材ID>）：').strip()
+            try:
+                references[kind].append(reference_url(value))
+                break
+            except argparse.ArgumentTypeError as exc:
+                print(str(exc))
+    return references
 
 
 def text_result(api_type, response):
@@ -447,8 +498,22 @@ def save_report(report, folder, key):
         f"Model：{safe['model'] or '未返回'}",
         f"完整测试耗时：{safe.get('elapsed_ms', 0)} ms",
     ]
-    if safe['mode'] == 'openai-video':
+    if safe['mode'] == 'seedance' and safe.get('action') in ('list', 'delete'):
+        text.append('操作：' + safe['action'])
+        if safe['action'] == 'list':
+            text.append(f"匹配任务总数：{safe.get('total', '未取得')}（仅显示当前页）")
+            for item in safe.get('items', []):
+                text.append(f"- {item.get('id', '-')} | {item.get('status', '-')} | {item.get('model', '-')}")
+        else:
+            text.append(f"任务 ID：{safe.get('task_id', '未取得')}")
+            if safe['outcome'] == 'completed':
+                text.append('取消/删除请求成功，具体操作由服务端任务状态决定。')
+    elif safe['mode'] in ('openai-video', 'seedance'):
         text.append(f"任务 ID：{safe.get('task_id', '未取得')}")
+        if safe.get('last_status'):
+            text.append('服务端任务状态：' + safe['last_status'])
+        if safe.get('wait') is False:
+            text.append('本次不轮询；submitted 表示已受理，尚未确认生成完成。')
         if safe.get('query_only'):
             text += ['模式：查询已有任务（未创建新任务）',
                      f"本次查询至观察到完成：{safe.get('query_completion_ms', '未完成')} ms",
@@ -602,7 +667,11 @@ def run(args, key, base, model):
     print(f"结果目录：{folder}", flush=True)
     started = time.perf_counter()
     deadline = started + args.max_wait
-    if args.api_type == 'video':
+    is_seedance = args.api_type == 'seedance'
+    is_video = args.api_type in ('video', 'seedance')
+    if is_seedance:
+        payload = seedance_payload(args, model) if args.action == 'create' else None
+    elif args.api_type == 'video':
         payload = None if args.task_id else video_payload(args, model)
     elif args.api_type == 'chat/completions':
         payload = {'model': model, 'messages': [{'role': 'user', 'content': args.prompt}], 'stream': args.stream}
@@ -616,13 +685,15 @@ def run(args, key, base, model):
         "outcome": "running", "request_body": payload,
         "requests": [], "returned_links": [],
     }
-    if args.api_type == 'video':
+    if is_video:
         report['poll_interval_seconds'] = args.poll_interval
         report['query_only'] = bool(args.task_id)
         report['video_query_api'] = args.video_query_api
         report.update(usage=None, usage_source=None, usage_status='not_reported')
         if args.task_id:
             report['task_id'] = args.task_id
+        if is_seedance:
+            report.update(action=args.action, wait=args.wait, video_query_api='seedance')
     else:
         report['stream'] = args.stream
     opener = request.build_opener(NoRedirect())
@@ -631,7 +702,7 @@ def run(args, key, base, model):
         report['elapsed_ms'] = round((time.perf_counter() - started) * 1000, 2)
         save_report(report, folder, key)
 
-    def call(phase, url, payload=None):
+    def call(phase, url, payload=None, method=None):
         remaining = deadline - time.perf_counter()
         if remaining <= 0:
             raise TimeoutError("达到总等待上限；服务端任务可能仍在运行，可用已保存的任务 ID 查询")
@@ -642,12 +713,13 @@ def run(args, key, base, model):
         if payload is not None:
             body = json.dumps(payload, ensure_ascii=False).encode('utf-8')
             headers['Content-Type'] = 'application/json'
-        row = {"phase": phase, "method": "POST" if body is not None else "GET", "url": url}
+        method = method or ('POST' if body is not None else 'GET')
+        row = {"phase": phase, "method": method, "url": url}
         report['requests'].append(row)
         tick = time.perf_counter()
         try:
             try:
-                response = opener.open(request.Request(url, data=body, headers=headers),
+                response = opener.open(request.Request(url, data=body, headers=headers, method=method),
                                        timeout=min(args.request_timeout, remaining))
             except error.HTTPError as exc:
                 response = exc
@@ -671,6 +743,9 @@ def run(args, key, base, model):
                     row['body_text'] = raw[:2 * 1024 * 1024].decode('utf-8', errors='replace')
                     raise ValueError("响应体超过 2 MiB，已截断保存")
                 decoded = raw.decode('utf-8', errors='replace')
+                if method == 'DELETE' and 200 <= response.code < 300 and not raw:
+                    row['body'] = None
+                    return {}
                 try:
                     value = json.loads(decoded)
                 except ValueError:
@@ -684,6 +759,8 @@ def run(args, key, base, model):
                     raise RuntimeError(f"{phase}: HTTP {response.code}，详见 result.json")
                 if not isinstance(value, dict):
                     raise ValueError(f"{phase}: 预期 JSON 对象")
+                if is_seedance and value.get('error') and not (phase == 'poll' and value.get('status')):
+                    raise RuntimeError(f'{phase}: 方舟接口返回业务错误，详见 result.json')
                 if args.stream:
                     raise ValueError('已请求流式，但接口返回了非 SSE 响应，详见 result.json')
                 return value
@@ -701,39 +778,65 @@ def run(args, key, base, model):
     code = 1
     try:
         checkpoint()
-        if args.api_type != 'video':
+        if not is_video:
             print(f"正在请求 {args.api_type}（{'流式' if args.stream else '非流式'}）…", flush=True)
             response = call('request', base + '/' + args.api_type, report['request_body'])
             if not args.stream:
                 report.update(text_result(args.api_type, response))
             report['outcome'] = report['response_status']
             return 0 if report['outcome'] == 'completed' else 2
+        collection_url = base + ('/contents/generations/tasks' if is_seedance else '/videos')
+        if is_seedance and args.action == 'list':
+            params = [('page_num', args.page_num), ('page_size', args.page_size)]
+            for name, value in (('status', args.filter_status), ('model', args.filter_model)):
+                if value:
+                    params.append(('filter.' + name, value))
+            params.extend(('filter.task_ids', value) for value in args.filter_task_id)
+            response = call('list', collection_url + '?' + parse.urlencode(params))
+            items, total = response.get('items'), response.get('total')
+            if (not isinstance(items, list) or not all(isinstance(item, dict) for item in items)
+                    or type(total) is not int or total < 0):
+                raise ValueError('方舟列表响应缺少有效 items/total，详见 result.json')
+            report.update(items=items, total=total, outcome='completed')
+            return 0
+        if is_seedance and args.action == 'delete':
+            call('delete', collection_url + '/' + parse.quote(args.task_id, safe=''), method='DELETE')
+            report['outcome'] = 'completed'
+            return 0
         if args.task_id:
             print('正在查询已有视频任务…', flush=True)
             task_id = args.task_id
         else:
             print("正在创建一个视频任务…", flush=True)
-            state = call('create', base + '/videos', report['request_body'])
+            state = call('create', collection_url, report['request_body'])
             task_id = state.get('id')
-            if not task_id and args.video_query_api == 'generations':
+            if not task_id and not is_seedance and args.video_query_api == 'generations':
                 task_id = state.get('task_id')
             if not isinstance(task_id, str) or not task_id.strip():
                 raise ValueError("创建响应缺少有效平台任务 ID，详见 result.json；不要自行拼接上游任务 ID")
         report['task_id'] = task_id
+        if is_seedance and not args.wait and args.action == 'create':
+            report['outcome'] = 'submitted'
+            return 0
         encoded_id = parse.quote(task_id, safe='')
         query_path = '/videos/' if args.video_query_api == 'videos' else '/video/generations/'
+        if is_seedance:
+            query_path = '/contents/generations/tasks/'
         task_url = base + query_path + encoded_id
         report['query_endpoint'] = task_url
-        report['content_endpoint'] = base + '/videos/' + encoded_id + '/content'
+        if not is_seedance:
+            report['content_endpoint'] = base + '/videos/' + encoded_id + '/content'
 
         def poll():
             response = call('poll', task_url)
             if (response.get('error') and not response.get('status')) or ('code' in response and response['code'] != 'success'):
                 raise RuntimeError('视频查询接口返回业务错误，详见 result.json')
-            state = response.get('data', response)
+            state = response if is_seedance else response.get('data', response)
             if not isinstance(state, dict):
                 raise ValueError('视频查询响应 data 不是 JSON 对象，详见 result.json')
             returned_id = state.get('task_id') or state.get('id')
+            if is_seedance and not isinstance(returned_id, str):
+                raise ValueError('方舟查询响应缺少任务 ID，详见 result.json')
             if returned_id is not None and returned_id != task_id:
                 raise ValueError('视频查询响应任务 ID 与请求不一致，详见 result.json')
             state_path = '$.data' if 'data' in response else '$'
@@ -755,7 +858,7 @@ def run(args, key, base, model):
             return state
 
         checkpoint()
-        if args.task_id or (args.video_query_api == 'generations' and
+        if is_seedance or args.task_id or (args.video_query_api == 'generations' and
                             str(state.get('status', '')).lower() in ('completed', 'succeeded', 'success')):
             # 即使创建响应已完成，也查询详情以取得下载地址和用量。
             state = poll()
@@ -777,6 +880,9 @@ def run(args, key, base, model):
                 raise RuntimeError(f"生成失败：{report['fail_reason']}，详见 result.json")
             if status not in ('queued', 'in_progress', 'pending', 'processing', 'running', 'submitted', 'not_start'):
                 raise ValueError(f"无法识别任务状态：{status!r}，详见 result.json")
+            if is_seedance and not args.wait:
+                report['outcome'] = status
+                return 0
             remaining = deadline - time.perf_counter()
             if remaining <= 0:
                 raise TimeoutError("达到总等待上限；服务端任务可能仍在运行")
@@ -784,6 +890,9 @@ def run(args, key, base, model):
             time.sleep(min(args.poll_interval, remaining))
             state = poll()
         result_url = state.get('result_url')
+        if is_seedance:
+            content = state.get('content')
+            result_url = content.get('video_url') if isinstance(content, dict) else None
         if isinstance(result_url, str) and result_url.startswith(('http://', 'https://')):
             report['result_url'] = result_url
         else:
@@ -791,6 +900,8 @@ def run(args, key, base, model):
         # 先落盘下载地址和用量；下载失败或中断也能保留本次任务结果。
         checkpoint()
         try:
+            if is_seedance and not result_url:
+                raise ValueError('方舟任务已成功，但未返回有效 content.video_url；无法下载')
             print('视频生成成功，正在下载完整视频…', flush=True)
             download_video(args, key, result_url or report['content_endpoint'], not bool(result_url),
                            folder, report, checkpoint)
@@ -814,8 +925,20 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--config', type=Path,
                         help='指定配置文件；默认读取脚本同目录 openai-api-config')
-    parser.add_argument('--api-type', choices=['chat/completions', 'responses', 'video'], help='不指定则显示接口选择菜单')
-    parser.add_argument('--task-id', help='查询已有视频任务；仅 GET，不创建新任务，无需 Model ID')
+    parser.add_argument('--api-type', choices=['chat/completions', 'responses', 'video', 'seedance'], help='不指定则显示接口选择菜单')
+    parser.add_argument('--task-id', help='已有任务 ID；默认查询，seedance --action delete 时取消/删除')
+    parser.add_argument('--action', choices=['create', 'query', 'list', 'delete'],
+                        help='仅 seedance：默认创建，有 --task-id 时默认查询；delete 取消/删除指定任务')
+    parser.add_argument('--wait', action=argparse.BooleanOptionalAction, default=True,
+                        help='seedance 默认轮询；--no-wait 只创建或单次查询，成功时仍下载视频')
+    parser.add_argument('--page-num', type=int, default=1, help='seedance 列表页码，默认 1')
+    parser.add_argument('--page-size', type=int, default=10, help='seedance 列表每页条数，默认 10')
+    parser.add_argument('--filter-status', choices=['queued', 'running', 'cancelled', 'succeeded', 'failed', 'expired'],
+                        help='seedance 列表状态筛选')
+    parser.add_argument('--filter-model', help='seedance 列表模型/推理接入点筛选')
+    parser.add_argument('--filter-task-id', action='append', default=[], help='seedance 列表任务 ID 筛选，可重复')
+    parser.add_argument('--first-frame', type=reference_url, help='seedance 首帧图片 URL/asset 标识')
+    parser.add_argument('--last-frame', type=reference_url, help='seedance 尾帧图片 URL/asset 标识，需同时指定首帧')
     parser.add_argument('--video-query-api', choices=['videos', 'generations'], default='generations',
                         help='默认 generations 查询 /video/generations/{id} 获取地址和用量；videos 手动使用 /videos/{id}')
     parser.add_argument('--stream', action=argparse.BooleanOptionalAction, default=None,
@@ -834,12 +957,15 @@ def main():
                         help='水印（默认关闭），--watermark 开启')
     parser.add_argument('--content', action='store_true', help='使用 content 数组发送提示词')
     parser.add_argument('--reference-image', action='append', type=reference_url, default=[],
-                        help='参考图片 HTTP(S) URL，可重复指定；自动使用 content 数组')
+                        help='参考图片 HTTP(S) URL 或 asset://asset-<素材ID>，可重复指定；跳过素材菜单')
+    parser.add_argument('--reference-audio', action='append', type=reference_url, default=[],
+                        help='参考音频 HTTP(S) URL 或 asset://asset-<素材ID>，可重复指定；跳过素材菜单')
+    parser.add_argument('--no-reference', action='store_true', help='不使用参考素材，跳过素材菜单')
     video_reference = parser.add_mutually_exclusive_group()
     video_reference.add_argument('--reference-video', action='append', type=reference_url, default=[],
-                                 help='参考视频 HTTP(S) URL，可重复指定；跳过参考视频菜单并使用 content 数组')
+                                 help='参考视频 HTTP(S) URL 或 asset://asset-<素材ID>，可重复指定；跳过素材菜单')
     video_reference.add_argument('--no-reference-video', action='store_true',
-                                 help='不使用参考视频，跳过参考视频菜单')
+                                 help='兼容旧参数：不使用参考视频并跳过素材菜单；仍可显式指定图片或音频')
     parser.add_argument('--poll-interval', type=positive_number, default=5)
     parser.add_argument('--download-timeout', type=positive_number, default=300,
                         help='视频下载时间上限（秒，默认 300），独立于生成等待 --max-wait')
@@ -847,34 +973,76 @@ def main():
     parser.add_argument('--max-wait', type=positive_number, default=1800, help='总等待上限，默认 1800 秒')
     parser.add_argument('--output', type=Path, help='结果目录，默认脚本同目录 test-results/<接口类型>/')
     args = parser.parse_args()
+    if args.no_reference and (args.reference_video or args.reference_image or args.reference_audio):
+        parser.error('--no-reference 不可与参考素材参数同时使用')
     try:
         if args.task_id is not None:
-            args.task_id = args.task_id.strip()
-            if not args.task_id or args.task_id in ('.', '..') or any(ord(c) < 32 or ord(c) == 127 for c in args.task_id):
-                raise ValueError('task ID 不可为空、路径点或包含控制字符')
-            if args.api_type not in (None, 'video'):
-                raise ValueError('--task-id 仅支持 video')
-            args.api_type = 'video'
+            args.task_id = validate_task_id(args.task_id)
+            if args.api_type not in (None, 'video', 'seedance'):
+                raise ValueError('--task-id 仅支持 video 或 seedance')
+            args.api_type = args.api_type or 'video'
         script_dir = Path(__file__).resolve().parent
         config = args.config if args.config is not None else script_dir / 'openai-api-config'
         profiles = load_profiles(config, required=args.config is not None)
         key, base = select_credentials(profiles)
+        interactive_api = args.api_type is None
         args.api_type = args.api_type or select_api_type()
-        if args.api_type == 'video' and args.stream:
-            raise ValueError('video 使用异步任务轮询，不支持 --stream')
+        is_seedance = args.api_type == 'seedance'
+        is_video = args.api_type in ('video', 'seedance')
+        if is_seedance:
+            if args.action is None and interactive_api and args.task_id is None:
+                args.action = select_seedance_action()
+                if args.action in ('query', 'delete'):
+                    args.task_id = input('任务 ID：')
+            args.action = args.action or ('query' if args.task_id is not None else 'create')
+            if args.action in ('query', 'delete') and args.task_id is None:
+                raise ValueError('--action query/delete 必须提供 --task-id')
+            if args.action in ('create', 'list') and args.task_id is not None:
+                raise ValueError('--action create/list 不可与 --task-id 同用；列表筛选请用 --filter-task-id')
+            if args.size:
+                raise ValueError('seedance 使用 --resolution，不支持 --size')
+            if args.video_query_api != 'generations':
+                raise ValueError('seedance 使用原生查询路径，不支持 --video-query-api videos')
+            seconds = args.duration if args.duration is not None else args.seconds
+            if seconds is not None and not seconds.is_integer():
+                raise ValueError('seedance 时长必须为整数秒')
+            if args.page_num < 1 or args.page_size < 1:
+                raise ValueError('页码和每页条数必须为正整数')
+            if args.last_frame and not args.first_frame:
+                raise ValueError('--last-frame 必须与 --first-frame 同用')
+            if (args.first_frame or args.last_frame) and (
+                    args.reference_video or args.reference_image or args.reference_audio or args.no_reference):
+                raise ValueError('首尾帧不可与参考素材或 --no-reference 混用')
+            has_filters = args.filter_status or args.filter_model or args.filter_task_id
+            if args.action != 'list' and (has_filters or args.page_num != 1 or args.page_size != 10):
+                raise ValueError('分页和筛选参数仅用于 --action list')
+        elif (args.action is not None or not args.wait or args.first_frame or args.last_frame
+              or args.filter_status or args.filter_model or args.filter_task_id
+              or args.page_num != 1 or args.page_size != 10):
+            raise ValueError('--action、--no-wait、首尾帧和列表参数仅支持 --api-type seedance')
+        if args.task_id is not None:
+            args.task_id = validate_task_id(args.task_id)
+        new_request = args.action == 'create' if is_seedance else not args.task_id
+        if is_video and args.stream:
+            raise ValueError('video/seedance 使用异步任务轮询，不支持 --stream')
         if args.stream is None:
-            args.stream = args.api_type != 'video'
-        if args.api_type == 'video' and not args.task_id and args.size is None and args.resolution is None:
+            args.stream = not is_video
+        if is_video and new_request and args.size is None and args.resolution is None:
             args.resolution = select_video_resolution()
-        if args.api_type == 'video' and not args.task_id and not args.reference_video and not args.no_reference_video:
-            args.reference_video = select_reference_videos()
+        if (is_video and new_request and not args.no_reference and not args.no_reference_video
+                and not (args.first_frame or args.last_frame)
+                and not (args.reference_video or args.reference_image or args.reference_audio)):
+            references = select_reference_media()
+            args.reference_video = references['video']
+            args.reference_image = references['image']
+            args.reference_audio = references['audio']
         if args.output is None:
             directory = 'openai-video' if args.api_type == 'video' else args.api_type.replace('/', '-')
             args.output = script_dir / 'test-results' / directory
-        model = None if args.task_id else (os.environ.get('OPENAI_MODEL_ID') or input('Model ID：')).strip()
-        if not key or (not args.task_id and not model):
+        model = (os.environ.get('OPENAI_MODEL_ID') or input('Model ID：')).strip() if new_request else None
+        if not key or (new_request and not model):
             raise ValueError('key 和 model ID 不可为空')
-        if not args.task_id:
+        if new_request:
             if args.prompt is None:
                 args.prompt = input('提示词：')
             if not args.prompt.strip():

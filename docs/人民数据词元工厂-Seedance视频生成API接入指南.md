@@ -1,6 +1,6 @@
 # 人民数据词元工厂 · Seedance 视频生成 API 接入指南
 
-更新日期：2026-10-13
+更新日期：2026-10-14
 
 适用对象：通过 HTTP API 调用视频生成服务的开发者。
 
@@ -301,9 +301,17 @@ ffprobe -v error \
 
 仅当平台确认所用模型和账号支持 1080p 后，才将请求中的 `"resolution": "720p"` 改为 `"resolution": "1080p"`，无需同时传 `size`。最终宽高、横竖屏及编码应以下载文件为准。
 
-## 5. 使用参考图片或视频
+## 5. 使用参考图片、视频或音频
 
-需要参考素材时，将纯文本 `prompt` 改为 `content` 数组。以下为请求结构示例，素材地址必须替换为服务端能够访问的真实 HTTP(S) URL：
+需要参考素材时，将纯文本 `prompt` 改为 `content` 数组。图片、视频、音频均可使用服务端能够访问的 HTTP(S) URL，或账号有权访问的 `asset://asset-<素材ID>`。请根据素材实际类型填写字段，不能将图片素材放入 `video_url`。
+
+| 素材类型 | type 及地址字段 | role |
+| --- | --- | --- |
+| 图片 | `image_url` / `image_url.url` | `reference_image` |
+| 视频 | `video_url` / `video_url.url` | `reference_video` |
+| 音频 | `audio_url` / `audio_url.url` | `reference_audio` |
+
+以下为请求结构示例，素材地址需替换为实际值，可按需删去不用的素材项：
 
 ```json
 {
@@ -311,7 +319,7 @@ ffprobe -v error \
   "content": [
     {
       "type": "text",
-      "text": "结合参考图片中的主体和参考视频的动作生成短视频"
+      "text": "结合参考图片中的主体、参考视频的动作和参考音频的节奏生成短视频"
     },
     {
       "type": "image_url",
@@ -326,6 +334,13 @@ ffprobe -v error \
         "url": "https://example.com/reference-video.mp4"
       },
       "role": "reference_video"
+    },
+    {
+      "type": "audio_url",
+      "audio_url": {
+        "url": "https://example.com/reference-audio.mp3"
+      },
+      "role": "reference_audio"
     }
   ],
   "duration": 5,
@@ -337,6 +352,22 @@ ffprobe -v error \
 ```
 
 请求仍发送到 `POST /v1/videos`，使用 `application/json`。不通过 multipart 直接上传本地素材文件。
+
+已有图片素材时，可将上面 `image_url` 项替换为以下结构，素材 ID 使用平台提供的实际值；视频、音频同理，保留各自的字段及 role：
+
+```json
+{
+  "type": "image_url",
+  "image_url": {
+    "url": "asset://asset-example"
+  },
+  "role": "reference_image"
+}
+```
+
+`asset://` 表示上游已有素材的引用，应原样传递，不添加 HTTP 前缀，也不作为本地文件上传。素材是否可用由平台的模型能力、素材状态和账号权限决定；该格式已通过客户端请求构造验证，未在本轮新建线上视频任务验证。
+
+根据 [Seedance 官方说明](https://docs.volcengine.com/docs/ark/create-video-generation-task-api?lang=zh)，示例模型 Seedance 2.0 的参考音频必须至少搭配一张参考图片或一段参考视频，不能仅传参考音频。`audio_url` 是输入素材，`generate_audio` 控制输出视频是否生成音频，两者含义不同；具体支持范围以平台开通能力为准。
 
 `role` 与 `type` 位于同一层级。请检查素材 URL 是否可访问、是否过期，以及是否符合已开通模型的素材要求。本轮实测覆盖纯文本生成；参考素材示例未做线上生成验证。
 
@@ -351,6 +382,8 @@ ffprobe -v error \
 | `model_not_found` | 核对模型名称和接入地址；名称无误时联系平台确认模型是否已开通、当前是否可用 |
 | `model_price_error` | 当前模型的计费配置不可用，请联系平台处理；重复提交相同请求不会解决此问题 |
 | `plugin_request_invalid` | 请求参数不满足当前服务要求，按错误信息调整时长、分辨率或其他字段；不要只看 HTTP 状态码 |
+| `asset_error` / 素材不存在或不可访问 | 检查素材 ID、所属账号和当前 API Key 的素材访问权限 |
+| `The specified asset is not a video` | 素材类型与 `video_url` 不符；图片应使用 `image_url` / `reference_image`，音频应使用 `audio_url` / `reference_audio` |
 | HTTP 429 | 降低调用频率；已有任务优先保留 ID，延长间隔后继续查询 |
 | HTTP 5xx / `convert_to_openai_video_failed` | 保存响应并联系平台排查；查询出错不等同于任务生成失败，不要因此重新创建任务 |
 | 任务状态 `failed` | 查看 `error.message`，例如素材处理失败；修正原因后再决定是否重新提交 |

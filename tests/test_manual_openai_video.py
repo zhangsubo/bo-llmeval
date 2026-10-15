@@ -159,7 +159,8 @@ class VideoScriptTest(unittest.TestCase):
                 if query_api != 'generations':
                     command += ['--video-query-api', query_api]
                 command += list(extra_args)
-                if interactive_input is None and '--reference-video' not in extra_args:
+                if interactive_input is None and not any(flag in extra_args for flag in
+                        ('--reference-video', '--reference-image', '--reference-audio', '--no-reference')):
                     command += ['--no-reference-video']
                 if task_id:
                     command += ['--task-id', task_id]
@@ -412,10 +413,72 @@ class VideoScriptTest(unittest.TestCase):
         self.assertNotIn('content', data['request_body'])
         self.assertEqual(data['request_body']['prompt'], '一只小熊在花园里跳舞')
 
+    def test_asset_video_is_preserved_in_interactive_and_cli_requests(self):
+        asset = 'asset://asset-20261014210723-w5jjm'
+        for interactive in (True, False):
+            with self.subTest(interactive=interactive):
+                flags = ['--resolution', '720p']
+                if not interactive:
+                    flags += ['--reference-video', asset, '--reference-video', 'https://example.com/reference.mp4']
+                code, data, _ = self.exercise('success', extra_args=flags,
+                    interactive_input='2\nasset://\n' + asset + '\n' if interactive else None)
+                self.assertEqual(code, 0)
+                body = data['request_body']
+                self.assertNotIn('prompt', body)
+                expected = [{'type': 'text', 'text': '一只小熊在花园里跳舞'},
+                            {'type': 'video_url', 'video_url': {'url': asset}, 'role': 'reference_video'}]
+                if not interactive:
+                    expected.append({'type': 'video_url', 'video_url': {'url': 'https://example.com/reference.mp4'},
+                                     'role': 'reference_video'})
+                self.assertEqual(body['content'], expected)
+
     def test_task_query_skips_reference_video_menu(self):
         code, _, calls = self.exercise('success', task_id='video-test', interactive_input='')
         self.assertEqual(code, 0)
         self.assertTrue(all(c[0] == 'GET' for c in calls))
+
+    def test_each_asset_media_type_interactive_and_cli(self):
+        for choice, kind in (('2', 'video'), ('3', 'image'), ('4', 'audio')):
+            for interactive in (True, False):
+                with self.subTest(kind=kind, interactive=interactive):
+                    asset = 'asset://asset-example-' + kind
+                    flags = ['--resolution', '720p']
+                    if not interactive:
+                        flags += ['--reference-' + kind, asset]
+                    code, data, _ = self.exercise('success', extra_args=flags,
+                        interactive_input=choice + '\n' + asset + '\n' if interactive else None)
+                    self.assertEqual(code, 0)
+                    self.assertEqual(data['request_body']['content'], [
+                        {'type': 'text', 'text': '一只小熊在花园里跳舞'},
+                        {'type': kind + '_url', kind + '_url': {'url': asset}, 'role': 'reference_' + kind}])
+                    self.assertNotIn('prompt', data['request_body'])
+
+    def test_interactive_mixed_media_and_invalid_selection(self):
+        code, data, _ = self.exercise('success', extra_args=['--resolution', '720p'],
+            interactive_input='1,3\n2,3,4\nhttps://example.com/video.mp4\nasset://asset-image\nfile:///tmp/audio.mp3\nhttps://example.com/audio.mp3\n')
+        self.assertEqual(code, 0)
+        self.assertEqual(data['request_body']['content'][1:], [
+            {'type': 'image_url', 'image_url': {'url': 'asset://asset-image'}, 'role': 'reference_image'},
+            {'type': 'video_url', 'video_url': {'url': 'https://example.com/video.mp4'}, 'role': 'reference_video'},
+            {'type': 'audio_url', 'audio_url': {'url': 'https://example.com/audio.mp3'}, 'role': 'reference_audio'}])
+
+    def test_cli_mixed_media_with_repeated_audio(self):
+        code, data, _ = self.exercise('success', extra_args=['--resolution', '720p',
+            '--reference-image', 'https://example.com/image.png',
+            '--reference-video', 'asset://asset-video',
+            '--reference-audio', 'asset://asset-audio',
+            '--reference-audio', 'https://example.com/audio.mp3'])
+        self.assertEqual(code, 0)
+        self.assertEqual(data['request_body']['content'][1:], [
+            {'type': 'image_url', 'image_url': {'url': 'https://example.com/image.png'}, 'role': 'reference_image'},
+            {'type': 'video_url', 'video_url': {'url': 'asset://asset-video'}, 'role': 'reference_video'},
+            {'type': 'audio_url', 'audio_url': {'url': 'asset://asset-audio'}, 'role': 'reference_audio'},
+            {'type': 'audio_url', 'audio_url': {'url': 'https://example.com/audio.mp3'}, 'role': 'reference_audio'}])
+
+    def test_no_reference_skips_menu(self):
+        code, data, _ = self.exercise('success', extra_args=['--resolution', '720p', '--no-reference'])
+        self.assertEqual(code, 0)
+        self.assertNotIn('content', data['request_body'])
 
     def test_guide_errors_preserve_response_and_stop(self):
         for scenario in ('unknown', 'rate_limited', 'documented_failure'):
@@ -507,6 +570,7 @@ class ConfigSelectionTest(unittest.TestCase):
         for flags in (['--task-id', ' '], ['--task-id', '..'],
                       ['--task-id', 'existing', '--api-type', 'responses']):
             with self.subTest(flags=flags), mock.patch.object(sys, 'argv', [str(SCRIPT)] + flags), \
+                    mock.patch.object(self.module, 'load_profiles', return_value=[]), \
                     mock.patch.object(self.module, 'select_credentials') as credentials, \
                     mock.patch.object(self.module, 'run') as run, \
                     mock.patch('sys.stderr', new_callable=io.StringIO):
@@ -519,6 +583,20 @@ class ConfigSelectionTest(unittest.TestCase):
                       ['--seconds', '5', '--duration', '6'], ['--seconds', '0'],
                       ['--duration', 'nan'], ['--reference-image', '/tmp/image.jpg'],
                       ['--reference-video', 'file:///tmp/video.mp4'],
+                      ['--reference-video', 'asset://'],
+                      ['--reference-video', 'asset://asset-'],
+                      ['--reference-video', 'asset://user:password@asset-example'],
+                      ['--reference-video', 'asset://asset-example/extra'],
+                      ['--reference-video', 'asset://asset-example?query=value'],
+                      ['--reference-video', 'asset://asset-example#fragment'],
+                      ['--reference-video', 'asset://asset-example\n'],
+                      ['--reference-image', 'asset://'],
+                      ['--reference-audio', 'file:///tmp/audio.mp3'],
+                      ['--reference-audio', 'asset://asset-audio?query=value'],
+                      ['--reference-audio', 'https://user:password@example.com/audio.mp3'],
+                      ['--reference-image', 'asset://asset-image', '--no-reference'],
+                      ['--reference-video', 'asset://asset-video', '--no-reference'],
+                      ['--reference-audio', 'asset://asset-audio', '--no-reference'],
                       ['--reference-video', 'https://example.com/video.mp4', '--no-reference-video']):
             with self.subTest(flags=flags), mock.patch.object(sys, 'argv', [str(SCRIPT)] + flags), \
                     mock.patch.object(self.module, 'select_credentials') as credentials, \
