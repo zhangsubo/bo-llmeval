@@ -173,6 +173,7 @@ export interface TestRunPayload {
   action?: 'create' | 'query' | 'list' | 'delete';
   wait?: boolean;
   video_query_api?: 'generations' | 'videos';
+  video_request_format?: 'default' | 'alibaba';
   resolution?: string;
   size?: string;
   seconds?: number;

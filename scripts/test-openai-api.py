@@ -71,6 +71,55 @@ def reference_url(value):
         '参考素材必须是 HTTP(S) URL 或 asset://asset-<素材ID>；不可包含账号密码、fragment 或本地文件路径')
 
 
+def validate_video_request_format(api_type, request_format, model=None, task_id=None,
+                                  reference_image=(), reference_video=(), reference_audio=(), content=False):
+    """CLI 与 Web 共用的格式校验；请求格式不决定接口路径。"""
+    if request_format not in ('default', 'alibaba'):
+        raise ValueError('video_request_format 必须为 default 或 alibaba')
+    if request_format == 'default':
+        return
+    if api_type != 'video':
+        raise ValueError('Alibaba 网关请求格式仅支持 --api-type video，不是百炼原生协议')
+    if task_id:
+        return  # 查询已有任务不需要重新提供图片或提示词。
+    if content:
+        raise ValueError('Alibaba 网关请求格式不支持 --content；请使用顶层 prompt 与参考图片')
+    if reference_video or reference_audio:
+        raise ValueError('当前 Alibaba 网关请求格式适配不支持参考视频/参考音频，请移除这些输入')
+    if model == 'wan2.6-i2v-flash' and len(reference_image) != 1:
+        raise ValueError('wan2.6-i2v-flash 必须且只能提供 1 张参考图片（--reference-image），不能缺图或使用多图')
+    for url in reference_image:
+        try:
+            reference_url(url)
+        except argparse.ArgumentTypeError as exc:
+            raise ValueError(str(exc)) from None
+        if parse.urlsplit(url).scheme not in ('http', 'https'):
+            raise ValueError('Alibaba 网关参考图片必须是 HTTP(S) URL，不支持 Seedance asset:// 素材标识')
+
+
+def alibaba_video_payload(args, model):
+    """Alibaba 网关顶层字段适配；不切换到百炼原生 input/parameters 协议。"""
+    validate_video_request_format('video', 'alibaba', model, reference_image=args.reference_image,
+                                  reference_video=args.reference_video, reference_audio=args.reference_audio,
+                                  content=args.content)
+    payload = {
+        'model': model, 'prompt': args.prompt,
+        'seconds': args.duration if args.duration is not None else args.seconds if args.seconds is not None else 5,
+        'audio': args.generate_audio, 'watermark': args.watermark,
+    }
+    if args.size:
+        payload['size'] = args.size
+    else:
+        payload['resolution'] = args.resolution or '720p'
+    if len(args.reference_image) == 1:
+        payload['input_reference'] = args.reference_image[0]
+    elif args.reference_image:
+        payload['images'] = list(args.reference_image)
+    if model != 'wan2.6-i2v-flash':
+        payload['ratio'] = args.ratio
+    return payload
+
+
 def video_payload(args, model):
     """按 Seedance 指南构造 JSON；互斥参数由 CLI 校验。"""
     payload = {'model': model, 'ratio': args.ratio,
@@ -512,6 +561,10 @@ def save_report(report, folder, key):
         f"Model：{safe['model'] or '未返回'}",
         f"完整测试耗时：{safe.get('elapsed_ms', 0)} ms",
     ]
+    if safe.get('video_request_format'):
+        text.append('视频请求格式：' + safe['video_request_format'])
+        if safe['video_request_format'] == 'alibaba' and safe.get('model') == 'wan2.6-i2v-flash':
+            text.append('画幅跟随输入图片，不发送 ratio。')
     if safe['mode'] == 'seedance' and safe.get('action') in ('list', 'delete'):
         text.append('操作：' + safe['action'])
         if safe['action'] == 'list':
@@ -989,7 +1042,8 @@ def run(args, key, base, model):
     elif is_seedance:
         payload = seedance_payload(args, model) if args.action == 'create' else None
     elif args.api_type == 'video':
-        payload = None if args.task_id else video_payload(args, model)
+        payload = None if args.task_id else (alibaba_video_payload(args, model)
+                   if getattr(args, 'video_request_format', 'default') == 'alibaba' else video_payload(args, model))
     elif args.api_type == 'chat/completions':
         payload = {'model': model, 'messages': [{'role': 'user', 'content': args.prompt}], 'stream': args.stream}
         if args.stream:
@@ -1002,6 +1056,8 @@ def run(args, key, base, model):
         "outcome": "running", "request_body": payload,
         "requests": [], "returned_links": [],
     }
+    if args.api_type == 'video':
+        report['video_request_format'] = getattr(args, 'video_request_format', 'default')
     if is_video:
         report['poll_interval_seconds'] = args.poll_interval
         report['query_only'] = bool(args.task_id)
@@ -1299,6 +1355,8 @@ def main():
     parser.add_argument('--filter-task-id', action='append', default=[], help='seedance 列表任务 ID 筛选，可重复')
     parser.add_argument('--first-frame', type=reference_url, help='seedance 首帧图片 URL/asset 标识')
     parser.add_argument('--last-frame', type=reference_url, help='seedance 尾帧图片 URL/asset 标识，需同时指定首帧')
+    parser.add_argument('--video-request-format', choices=['default', 'alibaba'], default='default',
+                        help='仅 video：显式选择 Alibaba 网关顶层字段格式；创建路径仍为 /videos')
     parser.add_argument('--video-query-api', choices=['videos', 'generations'], default='generations',
                         help='默认 generations 查询 /video/generations/{id} 获取地址和用量；videos 手动使用 /videos/{id}')
     parser.add_argument('--stream', action=argparse.BooleanOptionalAction, default=None,
@@ -1460,6 +1518,12 @@ def main():
                 args.prompt = input('提示词：')
             if not args.prompt.strip():
                 raise ValueError('提示词不可为空')
+        validate_video_request_format(
+            args.api_type, args.video_request_format, model, args.task_id,
+            args.reference_image, args.reference_video, args.reference_audio, args.content,
+        )
+        if args.video_request_format == 'alibaba' and model == 'wan2.6-i2v-flash' and new_request:
+            print('Alibaba 网关：wan2.6-i2v-flash 画幅跟随输入图片，不发送 ratio。', flush=True)
         if args.api_type in ('images/generations', 'bailian-video'):
             validate_media_args(args, model)
             if args.api_type == 'bailian-video':

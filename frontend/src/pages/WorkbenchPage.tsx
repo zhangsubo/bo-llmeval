@@ -66,6 +66,8 @@ const DEFAULT_MODEL_OPTIONS = DEFAULT_MODELS.map((m) => ({
 }));
 
 export interface WorkbenchPreset {
+  video_request_format?: 'default' | 'alibaba';
+  video_query_api?: 'generations' | 'videos';
   api_type?: 'chat/completions' | 'responses' | 'video' | 'seedance' | 'images/generations' | 'bailian-video';
   task_id?: string;
   action?: 'create' | 'query' | 'list' | 'delete';
@@ -112,6 +114,7 @@ export const WorkbenchPage: React.FC<WorkbenchPageProps> = ({
   );
   const [taskId, setTaskId] = useState('');
   const [waitCompletion, setWaitCompletion] = useState(true);
+  const [videoRequestFormat, setVideoRequestFormat] = useState<'default' | 'alibaba'>('default');
   const [videoQueryApi, setVideoQueryApi] = useState<'generations' | 'videos'>('generations');
   const [dimensionMode, setDimensionMode] = useState<'resolution' | 'size'>('resolution');
   const [resolution, setResolution] = useState('720p');
@@ -201,6 +204,8 @@ export const WorkbenchPage: React.FC<WorkbenchPageProps> = ({
   useEffect(() => {
     if (preset) {
       if (preset.api_type) setApiType(preset.api_type);
+      setVideoRequestFormat(preset.video_request_format || 'default');
+      setVideoQueryApi(preset.video_query_api || 'generations');
       if (preset.model) setModel(preset.model);
       if (preset.prompt) setPrompt(preset.prompt);
       if (preset.task_id) {
@@ -233,6 +238,8 @@ export const WorkbenchPage: React.FC<WorkbenchPageProps> = ({
     };
   }, []);
 
+  const isAlibabaGateway = apiType === 'video' && videoRequestFormat === 'alibaba';
+  const isAlibabaFlash = isAlibabaGateway && model.trim() === 'wan2.6-i2v-flash';
   const isBailian = apiType === 'bailian-video';
   const isImage = apiType === 'images/generations';
   const isQwenImage = isImage && model.startsWith('qwen-image');
@@ -269,6 +276,7 @@ export const WorkbenchPage: React.FC<WorkbenchPageProps> = ({
 
       if (apiType === 'video') {
         payload.video_query_api = videoQueryApi;
+        payload.video_request_format = videoRequestFormat;
         if (videoMode === 'query') {
           payload.task_id = taskId;
         } else {
@@ -282,14 +290,22 @@ export const WorkbenchPage: React.FC<WorkbenchPageProps> = ({
           } else {
             payload.seconds = durationValue;
           }
-          payload.ratio = ratio;
+          if (!isAlibabaFlash) payload.ratio = ratio;
           payload.generate_audio = generateAudio;
           payload.watermark = watermark;
-          payload.content_array = contentArray;
+          payload.content_array = !isAlibabaGateway && contentArray;
           if (mediaMode === 'references') {
             payload.reference_image = refImages.filter((x) => x.trim());
             payload.reference_video = refVideos.filter((x) => x.trim());
             payload.reference_audio = refAudios.filter((x) => x.trim());
+          }
+        }
+        if (isAlibabaGateway && videoMode === 'create') {
+          if (isAlibabaFlash && (payload.reference_image?.length || 0) !== 1) {
+            throw new Error('wan2.6-i2v-flash 必须且只能提供 1 张参考图片，请选择参考素材并填写图片 URL');
+          }
+          if (payload.reference_video?.length || payload.reference_audio?.length) {
+            throw new Error('当前 Alibaba 网关格式不支持参考视频/参考音频，请移除这些输入');
           }
         }
       } else if (apiType === 'seedance') {
@@ -570,6 +586,19 @@ export const WorkbenchPage: React.FC<WorkbenchPageProps> = ({
                     </Form.Item>
                   </Col>
                 </Row>
+                {apiType === 'video' && (
+                  <Form.Item label="请求格式 (--video-request-format)" style={{ marginTop: 12, marginBottom: 0 }}>
+                    <Select value={videoRequestFormat} onChange={setVideoRequestFormat} options={[
+                      { value: 'default', label: '默认兼容格式（保留现有行为）' },
+                      { value: 'alibaba', label: 'Alibaba 网关格式（顶层 prompt / input_reference / audio）' },
+                    ]} />
+                    {isAlibabaGateway && <Alert type="info" showIcon style={{ marginTop: 8 }}
+                      message="创建仍使用当前网关 /v1/videos，不是百炼原生 API；查询端点独立选择。"
+                      description={isAlibabaFlash
+                        ? 'wan2.6-i2v-flash 需要且只接受一张 HTTP(S) 参考图片，画幅跟随图片，不发送 ratio；音频开关映射为 audio。'
+                        : '参考图片使用 input_reference/images；当前适配不支持参考视频或音频。具体模型的图片数量和用法仍受网关契约约束。'} />}
+                  </Form.Item>
+                )}
                 {videoMode === 'query' && (
                   <Form.Item
                     label="已有平台任务 ID (--task-id)"
@@ -857,8 +886,9 @@ export const WorkbenchPage: React.FC<WorkbenchPageProps> = ({
                         </Form.Item>
                       </Col>
                       <Col xs={12} md={6}>
-                        <Form.Item label="画面比例 (--ratio)">
+                        <Form.Item label="画面比例 (--ratio)" extra={isAlibabaFlash ? '画幅跟随输入图片，不发送 ratio' : undefined}>
                           <Select
+                            disabled={isAlibabaFlash}
                             value={ratio}
                             onChange={setRatio}
                             options={[
@@ -876,7 +906,7 @@ export const WorkbenchPage: React.FC<WorkbenchPageProps> = ({
 
                     <Row gutter={12}>
                       <Col xs={8} md={8}>
-                        <Form.Item label="同步音频 (--generate-audio)" style={{ marginBottom: 8 }}>
+                        <Form.Item label={isAlibabaGateway ? '同步音频（映射为 audio）' : '同步音频 (--generate-audio)'} style={{ marginBottom: 8 }}>
                           <Switch checked={generateAudio} onChange={setGenerateAudio} />
                         </Form.Item>
                       </Col>
@@ -885,7 +915,7 @@ export const WorkbenchPage: React.FC<WorkbenchPageProps> = ({
                           <Switch checked={watermark} onChange={setWatermark} />
                         </Form.Item>
                       </Col>
-                      {apiType === 'video' && (
+                      {apiType === 'video' && !isAlibabaGateway && (
                         <Col xs={8} md={8}>
                           <Form.Item label="使用 content 数组" style={{ marginBottom: 8 }}>
                             <Switch checked={contentArray} onChange={setContentArray} />

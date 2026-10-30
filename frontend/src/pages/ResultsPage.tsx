@@ -545,6 +545,8 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({
                             api_type:
                               detail.result.mode === 'seedance' ? 'seedance' : detail.result.mode === 'bailian-video' ? 'bailian-video' : 'video',
                             task_id: detail.result.task_id,
+                            video_request_format: detail.result.video_request_format || 'default',
+                            video_query_api: detail.result.video_query_api === 'videos' ? 'videos' : 'generations',
                             action: 'query',
                             base_url: detail.result.base_url,
                           })
@@ -563,6 +565,8 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({
                               ? 'video'
                               : detail.result.mode,
                           model: detail.result.model,
+                          video_request_format: detail.result.video_request_format || 'default',
+                          video_query_api: detail.result.video_query_api === 'videos' ? 'videos' : 'generations',
                           base_url: detail.result.base_url,
                           prompt:
                             reqBody.prompt ||

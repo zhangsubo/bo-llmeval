@@ -77,6 +77,16 @@ class TestRunManager:
             str(category_dir),
         ]
 
+        request_format = payload.get('video_request_format') or 'default'
+        _load_script_module().validate_video_request_format(
+            api_type, request_format, (payload.get('model') or '').strip(), payload.get('task_id'),
+            [str(u).strip() for u in (payload.get('reference_image') or []) if str(u).strip()],
+            payload.get('reference_video') or [], payload.get('reference_audio') or [],
+            payload.get('content_array') is True,
+        )
+        if api_type == 'video':
+            cmd += ['--video-request-format', request_format]
+
         is_seedance = api_type == 'seedance'
         is_video = api_type in ('video', 'seedance', 'bailian-video')
 

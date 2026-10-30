@@ -25,19 +25,19 @@ const { Text } = Typography;
 type NavKey = 'workbench' | 'results' | 'config' | 'assets-aigc' | 'assets-real';
 
 const pageLabels: Record<NavKey, string> = {
-  workbench: '测试与诊断 / 测试工作台', results: '测试与诊断 / 结果与 AI 解读',
+  workbench: '测试与诊断 / 测试工作台', results: '结果与 AI 解读',
   'assets-aigc': '素材库 / 虚拟人像（AIGC）', 'assets-real': '素材库 / 真人人像', config: '系统设置 / 配置管理',
 };
 // 新入口统一在此分组注册，避免导航随功能增长挤占内容区。
 const navigationItems: MenuProps['items'] = [
   { key: 'diagnostics', type: 'group', label: '测试与诊断', children: [
     { key: 'workbench', icon: <ExperimentOutlined />, label: '测试工作台' },
-    { key: 'results', icon: <FileSearchOutlined />, label: '结果与 AI 解读' },
   ] },
   { key: 'assets', type: 'group', label: '素材库', children: [
     { key: 'assets-aigc', icon: <PictureOutlined />, label: '虚拟人像（AIGC）' },
     { key: 'assets-real', icon: <UserOutlined />, label: '真人人像' },
   ] },
+  { key: 'results', icon: <FileSearchOutlined />, label: '结果与 AI 解读' },
   { key: 'settings', type: 'group', label: '系统设置', children: [
     { key: 'config', icon: <SettingOutlined />, label: '配置管理' },
   ] },

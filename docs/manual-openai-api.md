@@ -346,3 +346,62 @@ python3 scripts/test-openai-api.py --config /dev/null --api-type images/generati
 ```
 
 Web 的「Images 图片生成」提供对应可选参数，按模型显示专用选项。URL 与 Base64 响应均保存为本地图片供预览下载，原始内嵌图片不会写入 JSON 报告或发送给 AI 解读模型。图片下载失败会保留已成功结果并标明失败状态。
+
+
+## Alibaba 网关视频请求格式（与百炼原生协议区分）
+
+经本地 Alibaba 插件 1.4.2 源码核对，`wan2.6-i2v-flash` 通过网关 `/v1/videos`
+创建时需要顶层 `prompt`、`input_reference`、`audio`。插件不会将 Seedance 风格的 `content`
+数组和 `generate_audio` 转为这些字段。显式选择请求格式，不根据模型名自动切换协议：
+
+- CLI：`--api-type video --video-request-format alibaba`。
+- Web：选「Video」，在「请求格式」中选「Alibaba 网关格式」，保留网关 Base URL。
+- 后端 `/api/tests/run`：`api_type: "video"`、`video_request_format: "alibaba"`；
+  评测输入仍用 `reference_image` 数组与 `generate_audio` 布尔值，由适配器映射。
+- 默认 `video_request_format: "default"` 保留原有行为。Seedance 与 `bailian-video`
+  不接受此格式；不要为了修复请求字段改选百炼原生 API。
+
+映射为顶层 `prompt`、单张 `input_reference`、`seconds`（也接受现有 `duration` 输入后归一化）、
+`resolution`（或明确选择的 `size`）、`audio`、`watermark`。两个布尔值均保留 `false`。
+仅 `wan2.6-i2v-flash` 必须有且只有一张 HTTP(S) 参考图片，其画幅跟随图片，不发送 `ratio`。
+缺图/多图在提交前报错；其他模型的图片数组保留为 `images`，具体语义仍以插件契约为准，
+不将 flash 的单图限制推广到所有模型。本次适配不支持参考视频、参考音频、`asset://`
+或强制 `content` 数组，遇到这些输入明确报错而不静默忽略。输出音频开关仍受支持。
+
+复测 20261030T050719Z-e3873487 这次输入：
+
+1. 在原结果的请求详情中取出 `content` 中的文字和唯一 `image_url.url`，确认图片链接仍有效，并使用直接返回图片的最终 URL，避免跨域重定向。
+2. 在工作台选择原网关凭据，接口选 Video、请求格式选 Alibaba 网关格式，模型填
+   `wan2.6-i2v-flash`；选择「参考素材」，填入该图片，使用原提示词。
+3. 设置 `seconds=5`、`resolution=720p`、音频开启、水印关闭；无需设置画幅。
+   查询端点保持 `generations`。确认后手动开始（将创建可能收费的新任务）。
+4. 检查新 `result.json`：`video_request_format=alibaba`，`request_body` 是实际发送的顶层字段，
+   没有 `content` / `generate_audio` / `ratio`；继续检查创建、轮询与下载各阶段。
+
+CLI 等价操作（使用已有配置选择凭据，不把密钥写入命令）：
+
+```bash
+OPENAI_MODEL_ID=wan2.6-i2v-flash python3 scripts/test-openai-api.py \
+  --api-type video --video-request-format alibaba \
+  --prompt '以图片中的熊为基础，生成一个吃小蛋糕的视频' \
+  --reference-image '<原结果中仍有效的参考图片 URL>' \
+  --seconds 5 --resolution 720p --generate-audio --no-watermark \
+  --video-query-api generations
+```
+
+请求格式只影响创建请求体，查询端点仍由 `--video-query-api` 独立控制。源码核对及本地模拟覆盖：
+创建取网关任务 `id`；`generations` 查询读取 `code=success` 包裹的 `data.task_id/status/result_url`，
+从 `data.data.usage`（或任务层 `usage`）读取服务端用量，不累加轮询、不从 quota 推算 Token；
+无用量仍标为未上报。`videos` 查询按其状态格式处理。直链下载不携带 API Key，缺少直链时使用
+带网关认证的 `/videos/{id}/content`。成功生成但下载失败单独记录，不重建任务。
+
+这些是离线契约验证，不是线上成功证明。原错误证据只覆盖创建 HTTP 400；实际网关部署版本、
+图片可达性、路由/模型权限、异步状态、产物地址有效性和最终用量仍需手动线上验证。
+未修改网关仓库、未部署服务，也未自动发起收费生成任务。
+
+后续验证（2026-10-30）：用户使用上述顶层 `input_reference` 请求格式和无需跳转的最终图片直链，
+确认创建、生成与下载均已成功。这是用户反馈的单次线上验证，不代表所有渠道或素材均已验证。
+
+注意：默认 `./start.sh` 启动的后端没有自动重载。修改 `backend/runner_service.py` 后必须在
+没有运行中任务时重启后端；仅刷新页面或重新构建前端不会更新已加载的 Python 代码。
+若页面已选 Alibaba 格式，结果却仍记录 `video_request_format=default`，应先检查后端是否已重启。

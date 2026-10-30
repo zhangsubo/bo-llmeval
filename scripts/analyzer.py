@@ -433,7 +433,7 @@ def build_diagnostic_digest(result_data: dict[str, Any], summary_text: str = '')
     return {
         'mode': mode,
         'outcome': outcome,
-        'operation': {key: result_data.get(key) for key in ('action', 'query_only', 'wait', 'video_query_api')},
+        'operation': {key: result_data.get(key) for key in ('action', 'query_only', 'wait', 'video_query_api', 'video_request_format')},
         'text_completion': {key: result_data.get(key) for key in (
             'response_status', 'finish_reasons', 'incomplete_details', 'stream_completed',
         )},
