@@ -12,3 +12,15 @@ API_KEY1=
 NAME2="常用配置二"
 BASE_URL2=
 API_KEY2=
+
+# AI 结果解读专用大模型配置（独立于被测配置，支持任意 OpenAI 兼容 chat/completions 接口）
+ANALYZER_NAME="AI 结果解读模型"
+ANALYZER_BASE_URL=
+ANALYZER_API_KEY=
+ANALYZER_MODEL=
+
+# 1Password CLI 的账号与保险库（名称或 ID）；不填写任何登录令牌。
+ONEPASSWORD_ACCOUNT=
+ONEPASSWORD_VAULT=
+# 在 Web 保存后 API_KEY1 / ANALYZER_API_KEY 自动写为 op://vault/item/credential。
+# 本文件只保存引用，不填写真实 API Key；临时 CLI 测试可继续通过环境变量提供。

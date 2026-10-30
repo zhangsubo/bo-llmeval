@@ -1,0 +1,143 @@
+# 开发环境编排：db / db-test / migrate / app / worker / code-worker 服务
+# 迁移只由 migrate 服务（或手工 alembic 命令）执行，应用启动路径绝不跑迁移
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-evalplat_dev}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dev-only-insecure}
+      POSTGRES_DB: ${POSTGRES_DB:-evalplat}
+      TZ: UTC
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  db-test:
+    image: postgres:16
+    profiles: ["test"]
+    environment:
+      POSTGRES_USER: ${TEST_POSTGRES_USER:-${POSTGRES_USER:-evalplat_dev}}
+      POSTGRES_PASSWORD: ${TEST_POSTGRES_PASSWORD:-${POSTGRES_PASSWORD:-dev-only-insecure}}
+      POSTGRES_DB: ${TEST_POSTGRES_DB:-evalplat_test}
+      TZ: UTC
+    ports:
+      - "${TEST_DB_PORT:-5433}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  migrate:
+    build: .
+    command: alembic upgrade head
+    env_file: .env
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      DATABASE_URL: ${COMPOSE_DATABASE_URL:-postgresql+psycopg://${POSTGRES_USER:-evalplat_dev}:${POSTGRES_PASSWORD:-dev-only-insecure}@db:5432/${POSTGRES_DB:-evalplat}}
+      PYTHONPATH: /app/src
+    depends_on:
+      db:
+        condition: service_healthy
+
+  app:
+    build: .
+    command: uvicorn evalplat.main:create_app --factory --host 0.0.0.0 --port 8000 --reload --reload-dir /app/src
+    env_file: .env
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      DATABASE_URL: ${COMPOSE_DATABASE_URL:-postgresql+psycopg://${POSTGRES_USER:-evalplat_dev}:${POSTGRES_PASSWORD:-dev-only-insecure}@db:5432/${POSTGRES_DB:-evalplat}}
+      PYTHONPATH: /app/src
+    volumes:
+      - ./src:/app/src
+      - ./data:/app/data
+    # The browser reaches the API through frontend/nginx. Keep the direct
+    # backend port local-only so a host firewall or reverse proxy cannot be
+    # bypassed accidentally by a broad Compose port binding.
+    ports:
+      - "127.0.0.1:${APP_PORT:-18002}:8000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    ports:
+      - "${FRONTEND_PORT:-8081}:80"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    depends_on:
+      app:
+        condition: service_healthy
+
+  worker:
+    build: .
+    command: python -m evalplat.worker
+    env_file: .env
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      DATABASE_URL: ${COMPOSE_DATABASE_URL:-postgresql+psycopg://${POSTGRES_USER:-evalplat_dev}:${POSTGRES_PASSWORD:-dev-only-insecure}@db:5432/${POSTGRES_DB:-evalplat}}
+      PYTHONPATH: /app/src
+    volumes:
+      - ./src:/app/src
+      - ./data:/app/data
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  code-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.code-worker
+    command: python -m evalplat.code_worker
+    env_file: .env
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      DATABASE_URL: ${COMPOSE_DATABASE_URL:-postgresql+psycopg://${POSTGRES_USER:-evalplat_dev}:${POSTGRES_PASSWORD:-dev-only-insecure}@db:5432/${POSTGRES_DB:-evalplat}}
+      PYTHONPATH: /app/src
+      # The Docker daemon resolves bind mounts on the host, not in this
+      # container. Keep an explicit host path and its worker-visible mount in
+      # sync so sandbox jobs work with the host Docker socket.
+      SANDBOX_HOST_DIR: "${SANDBOX_HOST_DIR:-${PWD}/data/sandboxes}"
+      SANDBOX_WORK_DIR: /sandbox
+    volumes:
+      - ./src:/app/src
+      - ./data:/app/data
+      # Keep the daemon-visible source identical to the path injected into
+      # SANDBOX_HOST_DIR. Both expressions intentionally use the same
+      # absolute-shell fallback; a relative volume with an absolute env value
+      # breaks bind mounts when Compose is invoked outside the project cwd.
+      - "${SANDBOX_HOST_DIR:-${PWD}/data/sandboxes}:/sandbox"
+      # The worker is the only service allowed to request sandbox containers.
+      - /var/run/docker.sock:/var/run/docker.sock
+    # Match the host docker.sock group while keeping the process non-root.
+    # Docker Desktop commonly exposes the socket as root:root (GID 0). Set
+    # DOCKER_GID to the numeric group owning /var/run/docker.sock on Linux.
+    group_add:
+      - "${DOCKER_GID:-0}"
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  pgdata:

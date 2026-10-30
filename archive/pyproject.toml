@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "evalplat"
+version = "0.1.0"
+description = "LLM API 服务评测管理平台"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi==0.141.1",
+    "sqlalchemy==2.0.52",
+    "alembic==1.19.1",
+    "pydantic==2.13.4",
+    "pydantic-settings==2.15.0",
+    "psycopg[binary]==3.3.4",
+    "uvicorn[standard]==0.52.3",
+    "structlog==26.1.0",
+    "cryptography>=44.0.0",
+    "tiktoken>=0.7.0",
+    "httpx==0.28.1",
+    "python-multipart==0.0.20",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==9.1.1",
+]
+evalscope = [
+    "evalscope==1.11.1",
+]
+resources = [
+    "transformers>=4.44.0",
+    "huggingface_hub>=0.24.0",
+    "modelscope>=1.18.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

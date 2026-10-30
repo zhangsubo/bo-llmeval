@@ -154,8 +154,10 @@ class VideoScriptTest(unittest.TestCase):
                 env = dict(os.environ, OPENAI_API_KEY=FAKE_KEY,
                            OPENAI_BASE_URL=f'http://127.0.0.1:{server.server_port}/v1/',
                            OPENAI_MODEL_ID='mock-video-model')
+                # 非超时契约测试不应依赖本机能在 200ms 内完成文件落盘及 HTTP 调度。
+                max_wait = '0.2' if scenario in ('timeout', 'content_after_deadline') else '5'
                 command = [sys.executable, str(SCRIPT), '--output', folder, '--config', os.devnull,
-                           '--poll-interval', '0.01', '--max-wait', '0.2']
+                           '--poll-interval', '0.01', '--max-wait', max_wait]
                 if query_api != 'generations':
                     command += ['--video-query-api', query_api]
                 command += list(extra_args)
@@ -265,7 +267,9 @@ class VideoScriptTest(unittest.TestCase):
         for scenario in ('content_json', 'content_partial', 'content_empty', 'content_invalid',
                          'content_truncated', 'redirect_loop', 'redirect_invalid', 'content_slow'):
             with self.subTest(scenario=scenario):
-                code, data, calls = self.exercise(scenario, extra_args=['--download-timeout', '0.1'])
+                # 仅慢下载场景断言超时；其他场景测试格式、状态码及重定向边界。
+                download_timeout = '0.1' if scenario == 'content_slow' else '5'
+                code, data, calls = self.exercise(scenario, extra_args=['--download-timeout', download_timeout])
                 self.assertEqual(code, 2)
                 self.assertEqual(data['outcome'], 'completed_download_failed')
                 self.assertEqual(data['last_status'], 'completed')

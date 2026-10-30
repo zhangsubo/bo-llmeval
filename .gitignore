@@ -10,13 +10,27 @@ __pycache__/
 
 # 本地数据卷残留
 pgdata/
+data/
+
+# Understand-Anything 本地分析缓存
+.ua/
+.understand-anything/
 
 # 系统文件
 .DS_Store
 未命名文件夹/
+.gstack/
 
 # Manual API probe credentials and local reports
 .env.openai-video
 /scripts/openai-api-config
 /scripts/test-results/
 /test-results/
+
+# Frontend dependencies and build output
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Local agent dispatch state
+.gsd/dispatch-isolation-sentinel.json

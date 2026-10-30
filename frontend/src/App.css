@@ -1,0 +1,22 @@
+.app-shell { min-height: 100dvh; background: oklch(0.975 0.005 250); }
+.app-sidebar.ant-layout-sider {
+  position: sticky; top: 0; height: 100dvh;
+  background: oklch(0.99 0.003 250); border-right: 1px solid oklch(0.92 0.008 250);
+}
+.app-sidebar .ant-layout-sider-children { display: flex; flex-direction: column; }
+.app-brand { min-height: 88px; padding: 24px 20px; display: flex; gap: 12px; align-items: center; }
+.app-brand-mark { width: 32px; height: 32px; flex-shrink: 0; border-radius: 8px; background: oklch(0.55 0.18 255); color: oklch(0.99 0.003 250); display: grid; place-items: center; font-size: 18px; font-weight: 700; }
+.app-brand strong { display: block; font-size: 16px; color: oklch(0.28 0.025 250); white-space: nowrap; }
+.app-brand span { display: block; margin-top: 3px; font-size: 11px; letter-spacing: 0.12em; color: oklch(0.55 0.02 250); }
+.app-navigation { flex: 1; min-height: 0; overflow-y: auto; }
+.app-navigation .ant-menu { background: transparent; border-inline-end: none !important; }
+.app-navigation .ant-menu-item-group-title { padding: 20px 24px 8px; font-size: 12px; }
+.app-sidebar-footer { padding: 16px 12px; border-top: 1px solid oklch(0.92 0.008 250); }
+.app-analyzer-link { max-width: 100%; }
+.app-sidebar-status { display: block; padding: 4px 12px; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-sidebar.ant-layout-sider-collapsed .app-brand { padding: 24px 16px; }
+.app-sidebar.ant-layout-sider-collapsed .ant-menu-item-group-title { height: 16px; padding: 0; overflow: hidden; font-size: 0; }
+.app-main.ant-layout { min-width: 0; background: transparent; }
+.app-content { padding: 24px 32px 40px; width: 100%; max-width: 1600px; margin: 0 auto; box-sizing: border-box; }
+.app-page-context { color: oklch(0.53 0.02 250); font-size: 12px; margin-bottom: 20px; }
+@media (max-width: 767px) { .app-content { padding: 16px 12px 24px; } }

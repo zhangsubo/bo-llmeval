@@ -1,8 +1,10 @@
 # OpenAI 兼容接口独立测试脚本
 
+> 密钥存储：Web 保存的常用接口 API Key 与 AI 解读 API Key 统一进入 1Password，本地字段使用 `op://` 引用。请在配置管理设置账号与保险库，并启用 1Password CLI 集成。CLI 会自动读取引用；旧明文配置仅为兼容迁移读取，不应继续手工写入真实密钥。详见 [1Password 密钥存储](../README.md#1password-密钥存储)。
+
 在 `bo-llmeval` 项目根目录运行 `python3 scripts/test-openai-api.py`，选择常用配置或临时输入 base URL、key，
 再选择接口类型并输入 model ID 和提示词。Python 3.11+，无需安装依赖，临时输入 key 时隐藏回显。
-菜单：1 为 `chat/completions`，2 为 `responses`，3 为 `video`（回车默认视频），4 为 `seedance`（火山方舟原生）。
+菜单：1 为 `chat/completions`，2 为 `responses`，3 为 `video`（回车默认视频），4 为 `seedance`（火山方舟原生），5 为 `images/generations`，6 为 `bailian-video`。
 选择 video 后会先显示分辨率菜单：1 为 720p（回车默认）、2 为 1080p、3 为 4K；
 也可直接输入档位名称。选择以 `resolution` 字段发送，不同时发送 `size`。
 `--resolution` 或 `--size` 已指定时跳过菜单，`--task-id` 查询和文本接口也不显示此菜单。
@@ -18,7 +20,7 @@ HTTP(S) 地址需能被上游访问；asset 地址引用上游已有素材，不
 它不写入平台任务/连接/数据库，不取代 EvalScope 的正式评测流程。
 默认读取脚本同目录的 `openai-api-config`，即 `scripts/openai-api-config`。
 路径相对于脚本位置解析，不受运行时工作目录影响；`--config` 显式指定的文件优先，不合并多个文件。
-字段使用 `NAME编号`、`BASE_URL编号`、`API_KEY编号`，四种接口共用配置结构；不同服务需各自配置正确的地址和 key。
+字段使用 `NAME编号`、`BASE_URL编号`、`API_KEY编号`，六种接口共用配置结构；不同服务需各自配置正确的地址和 key。
 
 也可直接指定接口类型，跳过接口菜单：
 
@@ -245,3 +247,102 @@ SSE 总响应上限 2 MiB，单行上限 256 KiB，超过上限会报错并保�
 项目验证：`./.venv/bin/python -m pytest tests/test_manual_openai*.py -q`。
 无第三方依赖的独立验证：`python3 -B -m unittest discover -s tests -p 'test_manual_openai*.py' -v`。
 自动化测试使用本地模拟接口；generations 查询曾实测成功。新版 JSON 创建未执行线上生成，不代表线上模型验收。
+
+## OpenAI Images 与百炼原生视频
+
+菜单 `5` / `--api-type images/generations` 支持 `qwen-image-3.0`；菜单 `6` /
+`--api-type bailian-video` 支持 `wan2.7-t2v-2026-06-12`（及 `wan2.7-t2v` 别名）、
+`wan2.6-i2v-flash`。Web 工作台提供相同协议选择、参数配置、生成/任务查询和自动 AI 解读。
+
+模型、API Key 与地域必须一致。Key 沿用已有凭证配置或 `OPENAI_API_KEY` 环境变量，
+以下示例不包含 Key。环境变量方式应使用空配置（`--config /dev/null`），避免弹出已有配置选择菜单。
+将域名中的 `你的业务空间ID` 换成百炼控制台中的 Workspace ID，并按模型地域选择域名。
+
+### 图片生成与编辑
+
+Base URL 为对应百炼域名加 `/compatible-mode/v1`；通用 OpenAI Images 服务则使用其文档要求的 Base URL。
+请求同步发送到 `/images/generations`，不支持流式。Qwen 编辑使用同一路径的 `image` 扩展字段，
+不调用 `/images/edits`，参考图片可使用 HTTP(S) URL；`--image` 或标准输入同时支持 Base64，不接受本地图片路径。
+
+```bash
+OPENAI_BASE_URL='https://你的业务空间ID.cn-beijing.maas.aliyuncs.com/compatible-mode/v1' \
+OPENAI_MODEL_ID='qwen-image-3.0' \
+python3 scripts/test-openai-api.py --config /dev/null --api-type images/generations \
+  --prompt '一张简洁的中文活动海报' --size 1024x1024 --image-count 2
+
+# 图像编辑：在上例追加 --reference-image；Qwen 3.0 最多 3 张
+# --reference-image 'https://example.com/input.png'
+```
+
+- `--image-count`：1–6；`--size`：`auto` 或 `宽x高`，Qwen 总像素在 512²–2048² 之间，宽高比不超过 8:1。
+- 可选 `--negative-prompt`、`--seed`（0–2147483647）、`--prompt-extend` / `--no-prompt-extend`、`--watermark`。
+- 解析 `data[].url` / `data[].b64_json`；下载验证 PNG/JPEG/WebP 文件标识、字节数与大小上限，逐张保存为 `image-N.*`。
+- 单张下载上限 32 MiB，图片接口 JSON 响应上限 64 MiB，支持较大的内嵌 Base64 响应；报告省略内嵌图片内容，仅保留长度信息。
+- 结果目录 `scripts/test-results/images-generations/`；Web 工作台和结果详情支持多图预览与下载。
+- 部分下载失败标记 `completed_download_failed`，保留已成功图片、原始链接和错误信息，不自动重新生成。
+
+### 百炼文生视频 / 图生视频
+
+Base URL 为对应百炼域名加 `/api/v1`。如输入 `/v1` 或 `/compatible-mode/v1`，
+百炼视频模式会改为同域名的 `/api/v1`；不会影响其他协议的地址。
+
+```bash
+OPENAI_BASE_URL='https://你的业务空间ID.cn-beijing.maas.aliyuncs.com/api/v1' \
+OPENAI_MODEL_ID='wan2.7-t2v-2026-06-12' \
+python3 scripts/test-openai-api.py --config /dev/null --api-type bailian-video \
+  --prompt '雨夜街头的电影镜头' --resolution 720p --duration 5 --ratio 16:9
+
+OPENAI_BASE_URL='https://你的业务空间ID.cn-beijing.maas.aliyuncs.com/api/v1' \
+OPENAI_MODEL_ID='wan2.6-i2v-flash' \
+python3 scripts/test-openai-api.py --config /dev/null --api-type bailian-video \
+  --prompt '让画面中的人物缓缓转身' --reference-image 'https://example.com/first.png' \
+  --resolution 1080p --duration 5 --no-generate-audio
+
+# 沿用同一 Base URL 与 Key，仅查询原任务，不重复生成，无需模型名或提示词
+python3 scripts/test-openai-api.py --api-type bailian-video --task-id '你的任务ID'
+```
+
+- 创建：`POST /api/v1/services/aigc/video-generation/video-synthesis`，包含 `X-DashScope-Async: enable`，请求为 `model/input/parameters`。
+- 查询：`GET /api/v1/tasks/{task_id}`，解析 `output.task_id/task_status/video_url` 及服务端 `usage`。
+- `PENDING/RUNNING` 继续轮询；`SUCCEEDED` 下载；失败、取消、过期（`UNKNOWN`）与未知状态停止并保留诊断。
+- 分辨率 720P/1080P（CLI 接受小写），时长 2–15 整数秒；Wan 2.6 图生视频必须有且仅有一张首帧图片。
+- Wan 2.6 的 `--generate-audio` 映射到 `parameters.audio`，`--shot-type single/multi` 配合提示词改写使用；宽高比由首帧决定。
+- Wan 2.7 文生视频支持 `--ratio`，不发送 `audio` 开关或 `shot_type`，不接受关闭音频参数。
+- 可选单个 `--reference-audio`、反向提示词、种子、提示词改写、水印；不支持火山 `asset://`、参考视频和首尾帧扩展。
+- `--poll-interval`、`--max-wait`、`--request-timeout`、`--download-timeout` 沿用现有超时机制。
+- 结果目录 `scripts/test-results/bailian-video/`；Web 可播放 MP4、查看原始用量、用已有 Task ID 继续查询下载。
+
+两种新协议均保留 API Key 脱敏、失败报告和独立 AI 解读配置。`--analyze` 或 Web「完成后自动 AI 解读」
+分析生成耗时、轮询、下载及服务端原始用量；图片/视频计量不强制解释为文本 Token。
+解读只处理诊断元数据，不评价图片或视频的视觉质量。未配置解读模型时使用本地规则报告。
+
+接口依据：[Qwen 图像生成与编辑](https://help.aliyun.com/en/model-studio/qwen-image-generation-and-editing-api-reference)、
+[Wan 2.7 文生视频](https://help.aliyun.com/en/model-studio/text-to-video-api-reference)、
+[Wan 2.6 图生视频](https://help.aliyun.com/en/model-studio/legacy-image-to-video-api-reference/)。
+
+
+## 通用 Images（Nexhina 协议）
+
+选择 `images/generations`，Base URL 填供应商实际 API 域名加 `/v1`，不使用文档站域名。
+参考：[生成图像接口文档](https://doc.nexhina.cn/470393252e0.md)。
+
+- `wanx-v2`：数量 1–10，尺寸 `1024x1024` / `720x1280` / `1280x720` / `auto`。
+- `cogview-4`：数量 1–10，尺寸 `1024x1024` / `768x1344` / `1344x768`。
+- `cogview-3-plus`：仅 1 张，尺寸同 cogview-4。
+- 不填写尺寸或可选参数时不发送该字段，使用服务端默认值。
+- `--quality low/medium/high/auto`、`--response-format url/b64_json`、`--user` 对应文档同名字段。
+- `wanx-v2` 专用：`--background transparent/opaque/auto`、`--moderation low/auto`。
+- `cogview-3-plus` 专用：`--style vivid/natural`。
+- 参考图 `--image` 接受单张 HTTP(S) URL、原始 Base64 或 `data:image/...;base64,...`，请求中的 `image` 是字符串。
+- 较大参考图可通过标准输入传 JSON 数组：`--image-input-stdin`；数组只能包含一张通用接口参考图，Qwen 支持多张。Web 自动使用标准输入传递，避免操作系统命令行长度限制。
+- Qwen 模型继续使用专用参数及多图数组，不改变原有接入。通用接口不发送 `prompt_extend`、`negative_prompt`、`seed`、`watermark`。
+
+```bash
+# 需预先配置 OPENAI_API_KEY；不在命令或文件中填写密钥。
+OPENAI_BASE_URL='https://你的API域名/v1' OPENAI_MODEL_ID='wanx-v2' \
+python3 scripts/test-openai-api.py --config /dev/null --api-type images/generations \
+  --prompt '未来科技城市' --size 1024x1024 --image-count 2 --quality high \
+  --background transparent --response-format b64_json
+```
+
+Web 的「Images 图片生成」提供对应可选参数，按模型显示专用选项。URL 与 Base64 响应均保存为本地图片供预览下载，原始内嵌图片不会写入 JSON 报告或发送给 AI 解读模型。图片下载失败会保留已成功结果并标明失败状态。

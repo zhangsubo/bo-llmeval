@@ -4,7 +4,7 @@
 运行：python3 scripts/test-openai-api.py
 自动读取脚本同目录 openai-api-config。
 选择配置、接口类型；video 选择分辨率和参考素材类型（视频、图片、音频），再输入 model ID 和提示词。
-支持 chat/completions、responses、video、seedance；--api-type 可直接指定类型。
+支持 chat/completions、responses、video、seedance、images/generations、bailian-video；--api-type 可直接指定类型。
 seedance 为火山方舟原生接口；--action create/query/list/delete，--no-wait 不轮询。
 --task-id 查询已有视频任务，跳过创建、接口类型菜单、Model ID 和提示词输入。
 视频按 Seedance 指南发送 JSON，默认查询 /video/generations/{id} 获取下载地址和 Token 用量。
@@ -15,6 +15,7 @@ seedance 为火山方舟原生接口；--action create/query/list/delete，--no-
 """
 
 import argparse
+import base64
 import codecs
 import getpass
 import json
@@ -27,6 +28,12 @@ import time
 from datetime import datetime, timezone
 from urllib import error, parse, request
 import uuid
+
+try:
+    from scripts import secret_store
+except ModuleNotFoundError:
+    import secret_store
+
 
 
 class NoRedirect(request.HTTPRedirectHandler):
@@ -109,7 +116,7 @@ def normalize_base(value):
     if url.username or url.password or url.query or url.fragment:
         raise ValueError("base URL 不可包含账号密码、查询参数或 fragment")
     path = url.path.rstrip("/")
-    for endpoint in ('/contents/generations/tasks', '/chat/completions', '/responses', '/video/generations', '/videos'):
+    for endpoint in ('/services/aigc/video-generation/video-synthesis', '/images/generations', '/contents/generations/tasks', '/chat/completions', '/responses', '/video/generations', '/videos'):
         if path.endswith(endpoint):
             path = path[:-len(endpoint)]
             break
@@ -137,11 +144,14 @@ def load_profiles(path, required=False):
         if line.startswith('export '):
             line = line[7:].lstrip()
         name, sep, value = line.partition('=')
-        match = re.fullmatch(r'(NAME|BASE_URL|API_KEY)([1-9][0-9]*)', name.strip())
+        raw_name = name.strip()
+        match = re.fullmatch(r'(NAME|BASE_URL|API_KEY)([1-9][0-9]*)', raw_name)
+        is_analyzer_field = raw_name in ('ANALYZER_NAME', 'ANALYZER_BASE_URL', 'ANALYZER_API_KEY', 'ANALYZER_MODEL', 'ASSET_ENDPOINT', 'ASSET_CREDENTIAL_STORE', 'ONEPASSWORD_ACCOUNT', 'ONEPASSWORD_VAULT')
+        is_analyzer_field = is_analyzer_field or bool(re.fullmatch(r'ASSET_(ID|NAME|ENDPOINT|CREDENTIAL_STORE)[1-9][0-9]*', raw_name))
         # 错误仅打印行号，避免配置值（尤其 key）随异常泄露。
-        if not sep or not match or name.strip() in seen:
+        if not sep or (not match and not is_analyzer_field) or raw_name in seen:
             raise ValueError(f'配置第 {line_number} 行字段无效或重复，应使用 NAME1/BASE_URL1/API_KEY1 等字段（编号为正整数）')
-        seen.add(name.strip())
+        seen.add(raw_name)
         value = value.strip()
         if value.startswith(('"', "'")):
             quoted = re.fullmatch(r"(['\"])(.*?)\1\s*(?:#.*)?", value)
@@ -150,6 +160,8 @@ def load_profiles(path, required=False):
             value = quoted.group(2)
         else:
             value = re.split(r'\s+#', value, maxsplit=1)[0].strip()
+        if is_analyzer_field:
+            continue
         field, number = match.groups()
         groups.setdefault(int(number), {})[field] = value.strip()
     profiles = []
@@ -165,7 +177,7 @@ def load_profiles(path, required=False):
         except ValueError:
             print(f'跳过配置 {number}：BASE_URL 格式无效。')
             continue
-        profiles.append({'name': group.get('NAME') or f'配置 {number}', 'base': base, 'key': key})
+        profiles.append({'name': group.get('NAME') or f'配置 {number}', 'base': base, 'key': secret_store.resolve(key, path)})
     return profiles
 
 
@@ -205,8 +217,8 @@ def select_credentials(profiles):
 
 
 def select_api_type():
-    options = {'1': 'chat/completions', '2': 'responses', '3': 'video', '4': 'seedance'}
-    print('请选择接口类型：\n  1. chat/completions\n  2. responses\n  3. video\n  4. seedance（火山方舟原生）')
+    options = {'1': 'chat/completions', '2': 'responses', '3': 'video', '4': 'seedance', '5': 'images/generations', '6': 'bailian-video'}
+    print('请选择接口类型：\n  1. chat/completions\n  2. responses\n  3. video\n  4. seedance（火山方舟原生）\n  5. images/generations\n  6. bailian-video（百炼原生）')
     while True:
         choice = input('输入编号（默认 3）：').strip() or '3'
         if choice in options:
@@ -225,15 +237,15 @@ def select_seedance_action():
 
 
 def select_video_resolution():
-    options = {'1': '720p', '2': '1080p', '3': '4k'}
-    print('请选择视频分辨率：\n  1. 720p（默认）\n  2. 1080p\n  3. 4K')
+    options = {'1': '720p', '2': '1080p', '3': '4k', '4': '480p'}
+    print('请选择视频分辨率：\n  1. 720p（默认）\n  2. 1080p\n  3. 4K\n  4. 480p')
     while True:
         choice = input('输入编号或分辨率（默认 1）：').strip().lower() or '1'
         if choice in options:
             return options[choice]
         if choice in options.values():
             return choice
-        print('选项无效，请选择 1/2/3 或 720p/1080p/4K。')
+        print('选项无效，请选择 1/2/3/4 或 480p/720p/1080p/4K。')
 
 
 def select_reference_media():
@@ -491,6 +503,8 @@ def redact_stream_fragments(report, key):
 
 def save_report(report, folder, key):
     safe = redact(report, key)
+    if report.get('mode') == 'images/generations':
+        safe = omit_image_base64(safe)
     redact_stream_fragments(safe, key)
     text = [
         f"{safe['mode']} 测试结果",
@@ -508,7 +522,7 @@ def save_report(report, folder, key):
             text.append(f"任务 ID：{safe.get('task_id', '未取得')}")
             if safe['outcome'] == 'completed':
                 text.append('取消/删除请求成功，具体操作由服务端任务状态决定。')
-    elif safe['mode'] in ('openai-video', 'seedance'):
+    elif safe['mode'] in ('openai-video', 'seedance', 'bailian-video'):
         text.append(f"任务 ID：{safe.get('task_id', '未取得')}")
         if safe.get('last_status'):
             text.append('服务端任务状态：' + safe['last_status'])
@@ -525,8 +539,10 @@ def save_report(report, folder, key):
         usage = safe.get('usage') or {}
         text += [f"总 Token 数：{usage.get('total_tokens') if usage.get('total_tokens') is not None else '未上报'}",
                  f"生成 Token 数：{usage.get('completion_tokens') if usage.get('completion_tokens') is not None else '未上报'}"]
+        if safe['mode'] == 'bailian-video':
+            text = [line for line in text if not line.startswith(('总 Token 数：', '生成 Token 数：'))]
         if usage:
-            text.append('Token 用量（服务端上报）：' + json.dumps(usage, ensure_ascii=False))
+            text.append(('服务端原始用量：' if safe['mode'] == 'bailian-video' else 'Token 用量（服务端上报）：') + json.dumps(usage, ensure_ascii=False))
         if safe.get('result_url'):
             text.append('视频下载地址：' + safe['result_url'])
     else:
@@ -540,7 +556,7 @@ def save_report(report, folder, key):
         else:
             text.append('请求模式：非流式；首个响应体字节耗时不等同于首 token 延时。')
         if safe.get('usage') is not None:
-            text.append('Token 用量：' + json.dumps(safe['usage'], ensure_ascii=False))
+            text.append('服务端用量：' + json.dumps(safe['usage'], ensure_ascii=False))
         if 'response_text' in safe:
             text += ['', '返回文本：', safe['response_text'] or '未返回文本，详见 result.json。']
         if safe.get('response_status') == 'incomplete':
@@ -552,6 +568,9 @@ def save_report(report, folder, key):
     if safe.get('content_endpoint'):
         text += ["", "按协议拼出的下载入口（需要 Bearer 鉴权，不是接口返回链接）：",
                  safe['content_endpoint']]
+    if safe.get('images'):
+        text += ['', '图片结果：']
+        text += [f"- {i.get('status')}: {i.get('file', '未保存')} {i.get('error', '')}" for i in safe['images']]
     if safe.get('download'):
         download = safe['download']
         text += ['', f"视频下载：{download['status']}",
@@ -660,6 +679,300 @@ def download_video(args, key, url, authenticated, folder, report, checkpoint):
         checkpoint()
 
 
+def bailian_base(base):
+    for suffix in ('/compatible-mode/v1', '/api/v1', '/v1'):
+        if base.endswith(suffix):
+            return base[:-len(suffix)] + '/api/v1'
+    return base
+
+
+def image_input(value):
+    value = value.strip()
+    if value.startswith(('http://', 'https://')):
+        return reference_url(value)
+    encoded = value
+    if value.startswith('data:'):
+        match = re.fullmatch(r'data:image/(?:png|jpeg|webp|gif|bmp|tiff);base64,(.+)', value)
+        if not match:
+            raise argparse.ArgumentTypeError('图片 data URL 格式无效')
+        encoded = match.group(1)
+    try:
+        if len(encoded) > 14 * 1024 * 1024:
+            raise ValueError()
+        data = base64.b64decode(encoded, validate=True)
+        if not data or len(data) > 10 * 1024 * 1024:
+            raise ValueError()
+    except ValueError:
+        raise argparse.ArgumentTypeError('图片必须是 HTTP(S) URL 或有效 Base64（最多 10 MiB）') from None
+    return value
+
+
+def omit_image_base64(value):
+    """报告及 AI 解读保留结构，不复制体积较大的内嵌图片。"""
+    if isinstance(value, dict):
+        return {k: (f'[Base64 image omitted: {len(v)} characters]' if k == 'b64_json' and isinstance(v, str)
+                    else omit_image_base64(v) if k != 'image' else
+                    [image_report_value(x) for x in v] if isinstance(v, list) else image_report_value(v))
+                for k, v in value.items()}
+    if isinstance(value, list):
+        return [omit_image_base64(v) for v in value]
+    return value
+
+
+def image_report_value(value):
+    if isinstance(value, str) and not value.startswith(('http://', 'https://')):
+        return f'[Base64 image omitted: {len(value)} characters]'
+    return value
+
+
+def validate_media_args(args, model):
+    if args.stream:
+        raise ValueError('图片生成与百炼视频不支持流式输出')
+    if args.seed is not None and not 0 <= args.seed <= 2147483647:
+        raise ValueError('seed 必须在 0–2147483647 之间')
+    for url in ([] if args.api_type == 'images/generations' else args.reference_image) + args.reference_audio:
+        if not url.startswith(('http://', 'https://')):
+            raise ValueError('百炼参考素材仅支持 HTTP(S) URL，不支持火山 asset://')
+    if args.reference_video or args.content:
+        raise ValueError('此协议不支持参考视频或 content 数组')
+    if args.api_type == 'images/generations':
+        if args.reference_audio or args.shot_type:
+            raise ValueError('图片接口不支持音频或镜头参数')
+        qwen = bool(model and model.startswith('qwen-image'))
+        maximum = 6 if qwen else 1 if model == 'cogview-3-plus' else 10
+        if not 1 <= args.image_count <= maximum:
+            raise ValueError(f'此模型图片数量必须为 1–{maximum}')
+        if not qwen and len(args.reference_image) > 1:
+            raise ValueError('通用 Images 接口仅支持一张参考图片（image 字符串）')
+        for value in args.reference_image:
+            try:
+                image_input(value)
+            except argparse.ArgumentTypeError as exc:
+                raise ValueError(str(exc)) from None
+        if not qwen and (args.negative_prompt or args.seed is not None or args.prompt_extend is not None or args.watermark):
+            raise ValueError('通用 Images 接口不支持 Qwen 的反向提示词、种子、改写及水印扩展')
+        dimensions = {'wanx-v2': ('1024x1024', '720x1280', '1280x720', 'auto'),
+                      'cogview-4': ('1024x1024', '768x1344', '1344x768'),
+                      'cogview-3-plus': ('1024x1024', '768x1344', '1344x768')}
+        if model in dimensions and args.size and args.size not in dimensions[model]:
+            raise ValueError('此模型不支持所选图片尺寸')
+        if model in dimensions:
+            if model != 'wanx-v2' and (args.background or args.moderation):
+                raise ValueError('background/moderation 仅适用于 wanx-v2')
+            if model != 'cogview-3-plus' and args.style:
+                raise ValueError('style 仅适用于 cogview-3-plus')
+        if model and model.startswith('qwen-image-3.0') and len(args.reference_image) > 3:
+            raise ValueError('Qwen Image 3.0 最多支持 3 张参考图片')
+        if args.size and args.size != 'auto':
+            match = re.fullmatch(r'([1-9][0-9]*)x([1-9][0-9]*)', args.size)
+            if not match:
+                raise ValueError('图片 size 必须为 auto 或 宽x高')
+            w, h = map(int, match.groups())
+            if model and model.startswith('qwen-image-3.0') and not (
+                    512*512 <= w*h <= 2048*2048 and max(w, h) <= 8*min(w, h)):
+                raise ValueError('Qwen 图片总像素须为 512²–2048²，宽高比不超过 8:1')
+    elif not args.task_id:
+        if model not in ('wan2.7-t2v-2026-06-12', 'wan2.7-t2v', 'wan2.6-i2v-flash'):
+            raise ValueError('百炼视频当前支持 wan2.7-t2v-2026-06-12、wan2.7-t2v、wan2.6-i2v-flash')
+        if args.size or args.video_query_api != 'generations':
+            raise ValueError('百炼视频使用 resolution 和原生任务查询路径')
+        if (args.resolution or '720p').upper() not in ('720P', '1080P'):
+            raise ValueError('百炼视频支持 720P 或 1080P')
+        seconds = args.duration if args.duration is not None else args.seconds
+        if seconds is not None and (not float(seconds).is_integer() or not 2 <= seconds <= 15):
+            raise ValueError('百炼视频时长必须为 2–15 整数秒')
+        if len(args.reference_audio) > 1:
+            raise ValueError('仅支持一个参考音频 URL')
+        if model == 'wan2.6-i2v-flash':
+            if len(args.reference_image) != 1:
+                raise ValueError('wan2.6-i2v-flash 必须提供一张首帧 --reference-image')
+        elif args.ratio not in ('16:9', '9:16', '1:1', '4:3', '3:4'):
+            raise ValueError('Wan 2.7 不支持此画面比例')
+        elif not args.generate_audio:
+            raise ValueError('Wan 2.7 文生视频不支持关闭音频')
+        elif args.reference_image or args.shot_type:
+            raise ValueError('Wan 2.7 文生视频不支持参考图片或 shot_type')
+
+
+def media_payload(args, model):
+    if args.api_type == 'images/generations':
+        body = {'model': model, 'prompt': args.prompt, 'n': args.image_count}
+        if args.size:
+            body['size'] = args.size
+        if args.reference_image:
+            body['image'] = args.reference_image if model.startswith('qwen-image') else args.reference_image[0]
+        for field in ('quality', 'background', 'moderation', 'response_format', 'style', 'user'):
+            value = getattr(args, field, None)
+            if value is not None:
+                body[field] = value
+        params = body
+        if model.startswith('qwen-image') or args.watermark:
+            params['watermark'] = args.watermark
+    else:
+        inp = {'prompt': args.prompt}
+        params = {'resolution': (args.resolution or '720p').upper(),
+                  'duration': int(args.duration if args.duration is not None else args.seconds or 5),
+                  'watermark': args.watermark}
+        if model == 'wan2.6-i2v-flash':
+            inp['img_url'] = args.reference_image[0]
+            params['audio'] = args.generate_audio
+            if args.shot_type:
+                params['shot_type'] = args.shot_type
+        else:
+            params['ratio'] = args.ratio
+        if args.reference_audio:
+            inp['audio_url'] = args.reference_audio[0]
+        body = {'model': model, 'input': inp, 'parameters': params}
+    if args.negative_prompt:
+        (body if args.api_type == 'images/generations' else body['input'])['negative_prompt'] = args.negative_prompt
+    if args.seed is not None:
+        params['seed'] = args.seed
+    if args.prompt_extend is not None:
+        params['prompt_extend'] = args.prompt_extend
+    return body
+
+
+def download_images(args, items, folder, report, checkpoint):
+    report['images'] = []
+    for index, item in enumerate(items):
+        row = {'index': index, 'status': 'downloading'}
+        report['images'].append(row)
+        tick = time.perf_counter()
+        partial = folder / f'image-{index + 1}.partial'
+        try:
+            if not isinstance(item, dict):
+                raise ValueError('图片条目必须为对象')
+            row['revised_prompt'] = item.get('revised_prompt')
+            if isinstance(item.get('url'), str) and item['url']:
+                url = reference_url(item['url'])
+                if not url.startswith(('http://', 'https://')):
+                    raise ValueError('图片下载 URL 必须为 HTTP(S)')
+                row['url'] = url
+                # 下载不携带生成接口的 Authorization；每一跳都校验协议。
+                opener = request.build_opener(NoRedirect())
+                for _ in range(6):
+                    remaining = args.download_timeout - (time.perf_counter() - tick)
+                    if remaining <= 0:
+                        raise TimeoutError('图片下载超时')
+                    try:
+                        response = opener.open(url, timeout=min(args.request_timeout, remaining))
+                    except error.HTTPError as exc:
+                        response = exc
+                    with response:
+                        if response.code in (301, 302, 303, 307, 308):
+                            location = response.headers.get('Location')
+                            if not location:
+                                raise ValueError('图片重定向缺少 Location')
+                            target = reference_url(parse.urljoin(url, location))
+                            if url.startswith('https://') and not target.startswith('https://'):
+                                raise ValueError('拒绝图片下载从 HTTPS 降级')
+                            url = target
+                            if not url.startswith(('http://', 'https://')):
+                                raise ValueError('图片重定向必须为 HTTP(S)')
+                            continue
+                        if response.code != 200:
+                            raise ValueError(f'图片下载 HTTP {response.code}')
+                        total = 0
+                        with partial.open('xb') as out:
+                            partial.chmod(0o600)
+                            while True:
+                                chunk = response.read1(65536)
+                                if not chunk:
+                                    break
+                                total += len(chunk)
+                                if total > 32 * 1024 * 1024:
+                                    raise ValueError('图片超过 32 MiB 下载上限')
+                                if time.perf_counter() - tick >= args.download_timeout:
+                                    raise TimeoutError('图片下载超时')
+                                out.write(chunk)
+                        length = response.headers.get('Content-Length')
+                        if length and total != int(length):
+                            raise ValueError('图片下载不完整')
+                        break
+                else:
+                    raise ValueError('图片重定向次数超过上限')
+            elif isinstance(item.get('b64_json'), str):
+                data = base64.b64decode(item['b64_json'], validate=True)
+                if len(data) > 32 * 1024 * 1024:
+                    raise ValueError('图片超过 32 MiB')
+                partial.write_bytes(data)
+            else:
+                raise ValueError('图片条目缺少 url 或 b64_json')
+            with partial.open('rb') as source:
+                signature = source.read(16)
+            ext = ('png' if signature.startswith(b'\x89PNG\r\n\x1a\n') else
+                   'jpg' if signature.startswith(b'\xff\xd8\xff') else
+                   'webp' if signature[:4] == b'RIFF' and signature[8:12] == b'WEBP' else None)
+            if not ext:
+                raise ValueError('下载内容不是支持的 PNG/JPEG/WebP 图片')
+            name = f'image-{index + 1}.{ext}'
+            partial.chmod(0o600)
+            partial.replace(folder / name)
+            row.update(status='completed', file=name, bytes=(folder / name).stat().st_size)
+        except KeyboardInterrupt:
+            row.update(status='interrupted', error='用户中断图片下载')
+            report['outcome'] = 'completed_download_interrupted'
+            raise
+        except Exception as exc:
+            row.update(status='failed', error=str(exc))
+            report['outcome'] = 'completed_download_failed'
+        finally:
+            partial.unlink(missing_ok=True)
+            row['duration_ms'] = round((time.perf_counter() - tick) * 1000, 2)
+            checkpoint()
+
+
+def run_bailian(args, base, payload, call, report, folder, key, checkpoint, started, deadline):
+    task_id = args.task_id
+    if not task_id:
+        response = call('create', base + '/services/aigc/video-generation/video-synthesis', payload)
+        output = response.get('output')
+        task_id = output.get('task_id') if isinstance(output, dict) else None
+        if response.get('code') or not isinstance(task_id, str) or not task_id.strip():
+            raise ValueError('百炼创建失败或缺少 output.task_id，详见 result.json')
+    task_id = validate_task_id(task_id)
+    report['task_id'] = task_id
+    report['query_endpoint'] = base + '/tasks/' + parse.quote(task_id, safe='')
+    checkpoint()
+    while True:
+        response = call('poll', report['query_endpoint'])
+        output = response.get('output')
+        if response.get('code') or not isinstance(output, dict):
+            raise ValueError('百炼查询返回业务错误或缺少 output，详见 result.json')
+        if output.get('task_id') != task_id:
+            raise ValueError('百炼查询响应任务 ID 与请求不一致')
+        status = output.get('task_status')
+        report['last_status'] = status
+        usage = response.get('usage')
+        reported = isinstance(usage, dict) and bool(usage)
+        report.update(usage=usage if reported else None, usage_source='$.usage' if reported else None,
+                      usage_status='reported' if reported else 'not_reported')
+        print(redact(f'状态：{status}', key), flush=True)
+        checkpoint()
+        if status == 'SUCCEEDED':
+            report['query_completion_ms' if args.task_id else 'completion_ms'] = round((time.perf_counter()-started)*1000, 2)
+            report['outcome'] = 'completed'
+            url = output.get('video_url')
+            try:
+                if not isinstance(url, str) or not url.startswith(('http://', 'https://')):
+                    raise ValueError('百炼成功响应缺少 output.video_url')
+                report['result_url'] = url
+                checkpoint()
+                download_video(args, key, url, False, folder, report, checkpoint)
+            except Exception as exc:
+                report.update(outcome='completed_download_failed', error=str(exc))
+            return 0 if report['outcome'] == 'completed' else 2
+        if status in ('FAILED', 'CANCELED', 'CANCELLED', 'UNKNOWN'):
+            report['fail_reason'] = f"{output.get('code', status)}: {output.get('message', '任务失败或过期')}"
+            raise RuntimeError(report['fail_reason'])
+        if status not in ('PENDING', 'RUNNING'):
+            raise ValueError(f'无法识别百炼任务状态：{status!r}')
+        remaining = deadline - time.perf_counter()
+        if remaining <= 0:
+            raise TimeoutError('达到总等待上限；可用 --task-id 继续查询')
+        time.sleep(min(args.poll_interval, remaining))
+
+
 def run(args, key, base, model):
     folder = args.output.expanduser().resolve() / (
         datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8])
@@ -668,8 +981,12 @@ def run(args, key, base, model):
     started = time.perf_counter()
     deadline = started + args.max_wait
     is_seedance = args.api_type == 'seedance'
-    is_video = args.api_type in ('video', 'seedance')
-    if is_seedance:
+    is_video = args.api_type in ('video', 'seedance', 'bailian-video')
+    is_bailian = args.api_type == 'bailian-video'
+    is_image = args.api_type == 'images/generations'
+    if is_bailian or is_image:
+        payload = None if args.task_id else media_payload(args, model)
+    elif is_seedance:
         payload = seedance_payload(args, model) if args.action == 'create' else None
     elif args.api_type == 'video':
         payload = None if args.task_id else video_payload(args, model)
@@ -709,6 +1026,8 @@ def run(args, key, base, model):
         headers = {"Authorization": "Bearer " + key, "Accept": "application/json"}
         if args.stream:
             headers['Accept'] = 'text/event-stream'
+        if is_bailian and phase == 'create':
+            headers['X-DashScope-Async'] = 'enable'
         body = None
         if payload is not None:
             body = json.dumps(payload, ensure_ascii=False).encode('utf-8')
@@ -738,10 +1057,11 @@ def run(args, key, base, model):
                 if args.stream and 200 <= response.code < 300 and 'text/event-stream' in response.headers.get('Content-Type', '').lower():
                     stream_result(response, first, args.api_type, row, report, tick, deadline, checkpoint)
                     return None
-                raw = first + response.read(2 * 1024 * 1024)
-                if len(raw) > 2 * 1024 * 1024:
-                    row['body_text'] = raw[:2 * 1024 * 1024].decode('utf-8', errors='replace')
-                    raise ValueError("响应体超过 2 MiB，已截断保存")
+                body_limit = (64 if is_image else 2) * 1024 * 1024
+                raw = first + response.read(body_limit)
+                if len(raw) > body_limit:
+                    row['body_text'] = '[response exceeded size limit]' if is_image else raw[:body_limit].decode('utf-8', errors='replace')
+                    raise ValueError(f'响应体超过 {body_limit // (1024 * 1024)} MiB，已停止读取')
                 decoded = raw.decode('utf-8', errors='replace')
                 if method == 'DELETE' and 200 <= response.code < 300 and not raw:
                     row['body'] = None
@@ -778,6 +1098,18 @@ def run(args, key, base, model):
     code = 1
     try:
         checkpoint()
+        if is_image:
+            response = call('request', base + '/images/generations', payload)
+            items = response.get('data')
+            if response.get('error') or not isinstance(items, list) or not items:
+                raise ValueError('图片生成响应缺少有效 data 图片列表，详见 result.json')
+            report.update(outcome='completed', usage=response.get('usage'), usage_source='$.usage',
+                          response_id=response.get('id') or response.get('request_id'))
+            checkpoint()
+            download_images(args, items, folder, report, checkpoint)
+            return 0 if report['outcome'] == 'completed' else 2
+        if is_bailian:
+            return run_bailian(args, base, payload, call, report, folder, key, checkpoint, started, deadline)
         if not is_video:
             print(f"正在请求 {args.api_type}（{'流式' if args.stream else '非流式'}）…", flush=True)
             response = call('request', base + '/' + args.api_type, report['request_body'])
@@ -909,7 +1241,7 @@ def run(args, key, base, model):
             report.update(outcome='completed_download_failed', error=str(exc))
         code = 0 if report['outcome'] == 'completed' else 2
     except KeyboardInterrupt:
-        report.update(outcome='completed_download_interrupted' if report.get('download') else 'interrupted',
+        report.update(outcome='completed_download_interrupted' if report.get('download') or report.get('images') else 'interrupted',
                       error='用户中断；服务端任务未取消')
         code = 130
     except Exception as exc:
@@ -918,6 +1250,30 @@ def run(args, key, base, model):
         checkpoint()
         print(redact((folder / 'summary.txt').read_text(encoding='utf-8'), key))
         print(f"详细结果：{folder / 'result.json'}")
+        if getattr(args, 'analyze', False):
+            try:
+                from analyzer import analyze_result_folder
+            except ImportError:
+                import importlib.util
+                spec = importlib.util.spec_from_file_location(
+                    'analyzer', Path(__file__).resolve().parent / 'analyzer.py'
+                )
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+                analyze_result_folder = mod.analyze_result_folder
+            try:
+                print('\n正在执行 AI 智能解读…', flush=True)
+                cfg_path = getattr(args, 'config', None) or (Path(__file__).resolve().parent / 'openai-api-config')
+                analyze_result_folder(
+                    folder,
+                    config_path=cfg_path,
+                    allow_fallback=True,
+                    on_delta=lambda piece: print(redact(piece, key), end='', flush=True),
+                    extra_secrets=[key] if key else [],
+                )
+                print(f"\nAI 解读报告：{folder / 'analysis.md'}")
+            except Exception as exc:
+                print(redact(f"\nAI 解读失败：{exc}", key), file=sys.stderr)
     return code
 
 
@@ -925,7 +1281,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--config', type=Path,
                         help='指定配置文件；默认读取脚本同目录 openai-api-config')
-    parser.add_argument('--api-type', choices=['chat/completions', 'responses', 'video', 'seedance'], help='不指定则显示接口选择菜单')
+    parser.add_argument('--analyze', action='store_true',
+                        help='测试结束后自动使用 ANALYZER_* 配置生成 AI 解读报告 (analysis.md / analysis.json)')
+    parser.add_argument('--analyze-dir', type=Path,
+                        help='直接对指定的已有 test-results 子目录执行 AI 解读，不发起新测试')
+    parser.add_argument('--api-type', choices=['chat/completions', 'responses', 'video', 'seedance', 'images/generations', 'bailian-video'], help='不指定则显示接口选择菜单')
     parser.add_argument('--task-id', help='已有任务 ID；默认查询，seedance --action delete 时取消/删除')
     parser.add_argument('--action', choices=['create', 'query', 'list', 'delete'],
                         help='仅 seedance：默认创建，有 --task-id 时默认查询；delete 取消/删除指定任务')
@@ -966,6 +1326,19 @@ def main():
                                  help='参考视频 HTTP(S) URL 或 asset://asset-<素材ID>，可重复指定；跳过素材菜单')
     video_reference.add_argument('--no-reference-video', action='store_true',
                                  help='兼容旧参数：不使用参考视频并跳过素材菜单；仍可显式指定图片或音频')
+    parser.add_argument('--image-count', type=int, default=1, help='图片数量：通用 1–10，Qwen 1–6，cogview-3-plus 仅 1')
+    parser.add_argument('--image-input-stdin', action='store_true', help='从标准输入读取参考图片字符串的 JSON 数组')
+    parser.add_argument('--image', type=image_input, action='append', default=[], help='Images 参考图 URL 或 Base64')
+    parser.add_argument('--quality', choices=['low', 'medium', 'high', 'auto'])
+    parser.add_argument('--background', choices=['transparent', 'opaque', 'auto'])
+    parser.add_argument('--moderation', choices=['low', 'auto'])
+    parser.add_argument('--response-format', choices=['url', 'b64_json'])
+    parser.add_argument('--style', choices=['vivid', 'natural'])
+    parser.add_argument('--user', help='Images 用户标识')
+    parser.add_argument('--negative-prompt', help='反向提示词')
+    parser.add_argument('--seed', type=int, help='随机种子，0–2147483647')
+    parser.add_argument('--prompt-extend', action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument('--shot-type', choices=['single', 'multi'], help='Wan 2.6 镜头类型')
     parser.add_argument('--poll-interval', type=positive_number, default=5)
     parser.add_argument('--download-timeout', type=positive_number, default=300,
                         help='视频下载时间上限（秒，默认 300），独立于生成等待 --max-wait')
@@ -973,22 +1346,62 @@ def main():
     parser.add_argument('--max-wait', type=positive_number, default=1800, help='总等待上限，默认 1800 秒')
     parser.add_argument('--output', type=Path, help='结果目录，默认脚本同目录 test-results/<接口类型>/')
     args = parser.parse_args()
+    if args.image_input_stdin:
+        if args.api_type != 'images/generations':
+            parser.error('--image-input-stdin 仅支持 images/generations')
+        try:
+            raw_images = sys.stdin.read(42 * 1024 * 1024 + 1)
+            if len(raw_images) > 42 * 1024 * 1024:
+                raise ValueError()
+            images = json.loads(raw_images)
+            if not isinstance(images, list) or not all(isinstance(item, str) for item in images):
+                raise ValueError()
+            args.image.extend(image_input(item) for item in images)
+        except (ValueError, argparse.ArgumentTypeError):
+            parser.error('标准输入必须为有效图片 URL/Base64 的 JSON 数组，最多 42 MiB')
+    if args.image:
+        if args.api_type != 'images/generations':
+            parser.error('--image 仅支持显式指定 --api-type images/generations')
+        args.reference_image.extend(args.image)
     if args.no_reference and (args.reference_video or args.reference_image or args.reference_audio):
         parser.error('--no-reference 不可与参考素材参数同时使用')
     try:
         if args.task_id is not None:
             args.task_id = validate_task_id(args.task_id)
-            if args.api_type not in (None, 'video', 'seedance'):
-                raise ValueError('--task-id 仅支持 video 或 seedance')
+            if args.api_type not in (None, 'video', 'seedance', 'bailian-video'):
+                raise ValueError('--task-id 仅支持 video、seedance 或 bailian-video')
             args.api_type = args.api_type or 'video'
         script_dir = Path(__file__).resolve().parent
         config = args.config if args.config is not None else script_dir / 'openai-api-config'
+        if getattr(args, 'analyze_dir', None) is not None:
+            try:
+                from analyzer import analyze_result_folder
+            except ImportError:
+                import importlib.util
+                spec = importlib.util.spec_from_file_location('analyzer', script_dir / 'analyzer.py')
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+                analyze_result_folder = mod.analyze_result_folder
+            profiles = load_profiles(config, required=args.config is not None)
+            extra_keys = [p['key'] for p in profiles if p.get('key')]
+            target_dir = args.analyze_dir.expanduser().resolve()
+            print(f'正在解读历史结果目录：{target_dir} …', flush=True)
+            analyze_result_folder(
+                target_dir,
+                config_path=config,
+                stream=args.stream if args.stream is not None else True,
+                allow_fallback=True,
+                on_delta=lambda piece: print(piece, end='', flush=True),
+                extra_secrets=extra_keys,
+            )
+            print(f"\nAI 解读已保存：{target_dir / 'analysis.md'}")
+            return 0
         profiles = load_profiles(config, required=args.config is not None)
         key, base = select_credentials(profiles)
         interactive_api = args.api_type is None
         args.api_type = args.api_type or select_api_type()
         is_seedance = args.api_type == 'seedance'
-        is_video = args.api_type in ('video', 'seedance')
+        is_video = args.api_type in ('video', 'seedance', 'bailian-video')
         if is_seedance:
             if args.action is None and interactive_api and args.task_id is None:
                 args.action = select_seedance_action()
@@ -1026,10 +1439,10 @@ def main():
         if is_video and args.stream:
             raise ValueError('video/seedance 使用异步任务轮询，不支持 --stream')
         if args.stream is None:
-            args.stream = not is_video
-        if is_video and new_request and args.size is None and args.resolution is None:
+            args.stream = not is_video and args.api_type != 'images/generations'
+        if is_video and args.api_type != 'bailian-video' and new_request and args.size is None and args.resolution is None:
             args.resolution = select_video_resolution()
-        if (is_video and new_request and not args.no_reference and not args.no_reference_video
+        if (is_video and args.api_type != 'bailian-video' and new_request and not args.no_reference and not args.no_reference_video
                 and not (args.first_frame or args.last_frame)
                 and not (args.reference_video or args.reference_image or args.reference_audio)):
             references = select_reference_media()
@@ -1047,6 +1460,10 @@ def main():
                 args.prompt = input('提示词：')
             if not args.prompt.strip():
                 raise ValueError('提示词不可为空')
+        if args.api_type in ('images/generations', 'bailian-video'):
+            validate_media_args(args, model)
+            if args.api_type == 'bailian-video':
+                base = bailian_base(base)
         return run(args, key, base, model)
     except (ValueError, EOFError) as exc:
         print(f'输入错误：{exc}', file=sys.stderr)
