@@ -33,4 +33,4 @@ dist/
 *.tsbuildinfo
 
 # Local agent dispatch state
-.gsd/dispatch-isolation-sentinel.json
+**/.gsd/dispatch-isolation-sentinel.json
