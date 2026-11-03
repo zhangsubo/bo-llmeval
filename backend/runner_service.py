@@ -76,6 +76,8 @@ class TestRunManager:
             '--output',
             str(category_dir),
         ]
+        if payload.get('c2pa_check'):
+            cmd.append('--c2pa-check')
 
         request_format = payload.get('video_request_format') or 'default'
         _load_script_module().validate_video_request_format(

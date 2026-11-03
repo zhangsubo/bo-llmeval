@@ -53,12 +53,12 @@ export interface ExtractedError {
   http_status?: number;
   request_error?: string;
   upstream_errors?: Array<{
-    code?: string;
+    code?: unknown;
     gateway_code?: string;
     type?: string;
-    param?: string;
-    message?: string;
-    fail_reason?: string;
+    param?: unknown;
+    message?: unknown;
+    fail_reason?: unknown;
   }>;
   response_body?: unknown;
   response_text?: string;
@@ -135,6 +135,7 @@ export interface ResultSummary {
 }
 
 export interface ResultDetail {
+  c2pa?: import('../components/C2paPanel').C2paReport | null;
   images?: { local_url: string; file: string; bytes: number; revised_prompt?: string }[];
   id: string;
   category: string;
@@ -151,6 +152,7 @@ export interface ResultDetail {
 }
 
 export interface TestRunPayload {
+  c2pa_check?: boolean;
   image_count?: number;
   quality?: string;
   background?: string;

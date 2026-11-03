@@ -1,4 +1,5 @@
 import { MediaImages } from '../components/MediaImages';
+import { C2paPanel } from '../components/C2paPanel';
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Alert,
@@ -147,6 +148,7 @@ export const WorkbenchPage: React.FC<WorkbenchPageProps> = ({
   const [downloadTimeout, setDownloadTimeout] = useState<number>(300);
   const [maxWait, setMaxWait] = useState<number>(1800);
   const [autoAnalyze, setAutoAnalyze] = useState<boolean>(false);
+  const [c2paCheck, setC2paCheck] = useState(false);
 
   // 运行状态
   const [currentRun, setCurrentRun] = useState<TestRunSnapshot | null>(null);
@@ -272,6 +274,7 @@ export const WorkbenchPage: React.FC<WorkbenchPageProps> = ({
         download_timeout: downloadTimeout,
         max_wait: maxWait,
         auto_analyze: autoAnalyze,
+        c2pa_check: c2paCheck,
       };
 
       if (apiType === 'video') {
@@ -463,6 +466,7 @@ export const WorkbenchPage: React.FC<WorkbenchPageProps> = ({
           }
         >
           <Form layout="vertical">
+            <Form.Item label="视频下载后检测 C2PA（缺失仅提示）"><Switch checked={c2paCheck} onChange={setC2paCheck} /></Form.Item>
             {/* 1. 选择配置组 */}
             <Form.Item label="1. 选择 API 凭证配置（Base URL 与 API Key 成对使用）">
               <Select
@@ -1225,6 +1229,7 @@ export const WorkbenchPage: React.FC<WorkbenchPageProps> = ({
 
               {/* 视频生成成功后直接内嵌播放 */}
               <MediaImages images={currentRun.detail?.images} />
+              {currentRun.detail?.has_video && <C2paPanel key={currentRun.detail.id} category={currentRun.detail.category} folder={currentRun.detail.folder} initial={currentRun.detail.c2pa} />}
               {currentRun.detail?.has_video && currentRun.detail.video_url && (
                 <Card
                   size="small"

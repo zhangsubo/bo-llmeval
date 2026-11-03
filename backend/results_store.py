@@ -238,6 +238,7 @@ def get_result_detail(category: str, folder: str, results_root: Path | None = No
         'folder_path': str(target),
         'result_json_path': str(result_file),
         'result': result_data,
+        'c2pa': json.loads((target / 'c2pa.json').read_text()) if (target / 'c2pa.json').is_file() else None,
         'summary_text': summary_text,
         'digest': digest,
         'analysis': analysis_data,

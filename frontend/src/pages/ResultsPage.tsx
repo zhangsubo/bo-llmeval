@@ -1,4 +1,5 @@
 import { MediaImages } from '../components/MediaImages';
+import { C2paPanel } from '../components/C2paPanel';
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Alert,
@@ -49,6 +50,12 @@ import { MarkdownViewer } from '../components/MarkdownViewer';
 import type { WorkbenchPreset } from './WorkbenchPage';
 
 const { Title, Text } = Typography;
+
+// Gateway error fields may contain nested JSON rather than strings.
+function errorFieldText(value: unknown): string {
+  if (value == null) return '';
+  return typeof value === 'string' ? value : JSON.stringify(value);
+}
 
 interface ResultsPageProps {
   selectedTarget?: { category: string; folder: string } | null;
@@ -555,7 +562,7 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({
                         用此 Task ID 继续查询/下载
                       </Button>
                     )}
-                    {detail.result.mode !== 'volcengine-assets' && <Button
+                    {!['volcengine-assets', 'benchmark'].includes(detail.result.mode) && <Button
                       icon={<ThunderboltOutlined />}
                       onClick={() => {
                         const reqBody = detail.result.request_body || {};
@@ -733,18 +740,18 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({
                                   fontFamily: 'monospace',
                                 }}
                               >
-                                {up.code && (
+                                {Boolean(up.code) && (
                                   <span>
-                                    <strong>错误码:</strong> {up.code} |{' '}
+                                    <strong>错误码:</strong> {errorFieldText(up.code)} |{' '}
                                   </span>
                                 )}
-                                {up.param && (
+                                {Boolean(up.param) && (
                                   <span>
-                                    <strong>问题参数:</strong> {up.param} |{' '}
+                                    <strong>问题参数:</strong> {errorFieldText(up.param)} |{' '}
                                   </span>
                                 )}
                                 <span>
-                                  <strong>原因:</strong> {up.message || up.fail_reason}
+                                  <strong>原因:</strong> {errorFieldText(up.message || up.fail_reason)}
                                 </span>
                               </div>
                             ))}
@@ -791,6 +798,7 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({
 
               <MediaImages images={detail.images} />
               {/* 3. 多媒体视频播放器或返回文本预览 */}
+              {detail.has_video && <C2paPanel key={detail.id} category={detail.category} folder={detail.folder} initial={detail.c2pa} />}
               {(detail.has_video || detail.result.response_text !== undefined) && (
                 <Card
                   size="small"

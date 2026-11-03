@@ -1303,6 +1303,15 @@ def run(args, key, base, model):
     except Exception as exc:
         report.update(outcome='timeout' if isinstance(exc, TimeoutError) else 'failed', error=str(exc))
     finally:
+        if getattr(args, 'c2pa_check', False) and (folder / 'video.mp4').is_file():
+            try:
+                try:
+                    from c2pa_check import check_and_save
+                except ImportError:
+                    from scripts.c2pa_check import check_and_save
+                report['c2pa'] = check_and_save(folder)
+            except Exception:
+                report['c2pa'] = {'execution': 'error', 'error': 'C2PA 检测未完成'}
         checkpoint()
         print(redact((folder / 'summary.txt').read_text(encoding='utf-8'), key))
         print(f"详细结果：{folder / 'result.json'}")
@@ -1335,6 +1344,7 @@ def run(args, key, base, model):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument('--c2pa-check', action='store_true', help='视频下载后使用 C2PA SDK 或 c2patool 离线校验凭证')
     parser.add_argument('--config', type=Path,
                         help='指定配置文件；默认读取脚本同目录 openai-api-config')
     parser.add_argument('--analyze', action='store_true',

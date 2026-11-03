@@ -58,6 +58,14 @@ python3 scripts/analyzer.py scripts/test-results/openai-video/20261014T133128Z-c
 
 新增独立工具 `python3 scripts/test-volcengine-assets.py`，支持素材/素材组的创建、查询、列表、更新、删除，以及素材入库状态轮询；真人人像支持生成 H5 认证链接、查询认证后的 GroupId 并上传素材。通过 `--endpoint` 或 `VOLC_ASSET_ENDPOINT` 指定根地址，不自动追加 `/api/v3`、`/v1` 或 `/business-api`。官方 AK/SK 签名与可选的兼容网关 Bearer 鉴权、配置和使用示例见 [素材库测试手册](docs/manual-volcengine-assets.md)。也可在 Web 左侧“素材库”分组中的“虚拟人像（AIGC）”或“真人人像”页面操作，支持真人认证链接、会话自动填入、入库轮询和历史报告。可在配置管理新增多个具名素材库配置组，分别保存根地址和 AK/SK，并在素材库页面选择使用（各组 AK/SK 独立存于 1Password）；也可临时填写凭证，仅用于当前页面请求。
 
+## LLM 压测与视频 C2PA
+
+新增“LLM 压测与自检”页面与 `scripts/benchmark.py`：并发数可设置，支持固定并发、固定 RPS、阶梯加压、历史对比、JSON/JSONL/CSV/Markdown 导出。统计正文 TTFT、片段间隔、最长静默、吞吐量和 p95/p99；可选择 tokenizer 估算 TPOT，普通 SSE 无逐 token 时间时不伪造 ITL。没有 SLO 不自动判性能合格。
+
+视频测试可选下载后 C2PA 检测，也可在结果页对历史视频补检；签名、内容绑定和信任分别展示，凭证缺失仅提示。平台默认集成 `c2pa-python` SDK，无需单独安装 `c2patool`；独立诊断脚本仍可只用 Python 标准库运行，启用 C2PA 时可使用 SDK 或外部校验器。
+
+CLI 示例、指标口径、自检边界和本地发压校准见 [压测与 C2PA 手册](docs/manual-benchmark.md)。
+
 ## 自动化测试
 
 ```bash

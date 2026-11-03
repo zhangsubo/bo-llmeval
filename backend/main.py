@@ -32,6 +32,7 @@ from .results_store import (
 )
 from .runner_service import TestRunManager
 from .assets_service import run_asset_request
+from .benchmark_service import BenchmarkManager
 
 
 class ProfileItemInput(BaseModel):
@@ -89,6 +90,7 @@ def create_app(
     cfg_path = config_path or DEFAULT_CONFIG_PATH
     res_root = results_root or DEFAULT_RESULTS_ROOT
     run_manager = TestRunManager(config_path=cfg_path, results_root=res_root)
+    benchmark_manager = BenchmarkManager(cfg_path, res_root)
 
     app = FastAPI(
         title='OpenAI 兼容接口测试与 AI 诊断平台',
@@ -106,6 +108,60 @@ def create_app(
     @app.get('/api/health')
     def health_check() -> dict[str, Any]:
         return {'status': 'ok', 'results_root': str(res_root), 'config_path': str(cfg_path)}
+
+    @app.post('/api/benchmarks')
+    def start_benchmark(payload: dict[str, Any]):
+        try:
+            return benchmark_manager.start(payload)
+        except ValueError:
+            raise HTTPException(400, '配置无效或已有任务运行；请检查模型、正整数并发、阶段和凭证') from None
+
+    @app.get('/api/benchmarks')
+    def list_benchmarks():
+        return {'items': benchmark_manager.list()}
+
+    @app.get('/api/benchmarks/compare')
+    def compare_benchmarks(baseline: str, candidate: str):
+        try:
+            return benchmark_manager.comparison(baseline, candidate)
+        except (ValueError, OSError):
+            raise HTTPException(404, '压测结果不存在或格式无效') from None
+
+    @app.get('/api/benchmarks/{run_id}')
+    def get_benchmark(run_id: str):
+        try:
+            return benchmark_manager.get(run_id)
+        except (ValueError, OSError):
+            raise HTTPException(404, '压测结果不存在或格式无效') from None
+
+    @app.post('/api/benchmarks/{run_id}/stop')
+    def stop_benchmark(run_id: str, immediate: bool = False):
+        try:
+            return benchmark_manager.stop(run_id, immediate)
+        except (ValueError, OSError):
+            raise HTTPException(400, '当前任务无法停止') from None
+
+    @app.get('/api/benchmarks/{run_id}/export/{kind}')
+    def export_benchmark(run_id: str, kind: str):
+        names = {'json': 'result.json', 'jsonl': 'requests.jsonl', 'markdown': 'report.md', 'csv': 'requests.csv'}
+        if kind not in names:
+            raise HTTPException(400, '不支持的导出格式')
+        try:
+            target = resolve_result_folder('benchmark', run_id, res_root) / names[kind]
+            if target.is_symlink() or not target.is_file():
+                raise FileNotFoundError()
+            return FileResponse(target, filename=f'{run_id}-{names[kind]}')
+        except (ValueError, OSError):
+            raise HTTPException(404, '报告尚未生成') from None
+
+    @app.post('/api/results/{category}/{folder}/c2pa')
+    def check_result_c2pa(category: str, folder: str):
+        from scripts.c2pa_check import check_and_save
+        try:
+            target = resolve_result_folder(category, folder, res_root)
+            return check_and_save(target)
+        except (ValueError, OSError):
+            raise HTTPException(400, '无法读取视频结果或保存校验报告') from None
 
     @app.post('/api/assets/run')
     def run_assets_endpoint(payload: dict[str, Any]):

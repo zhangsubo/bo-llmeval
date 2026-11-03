@@ -16,15 +16,17 @@ import { WorkbenchPage, type WorkbenchPreset } from './pages/WorkbenchPage';
 import { ResultsPage } from './pages/ResultsPage';
 import { ConfigPage } from './pages/ConfigPage';
 import { AssetsPage } from './pages/AssetsPage';
+import { BenchmarkPage } from './pages/BenchmarkPage';
 
 import './App.css';
 
 const { Sider, Content } = Layout;
 const { Text } = Typography;
 
-type NavKey = 'workbench' | 'results' | 'config' | 'assets-aigc' | 'assets-real';
+type NavKey = 'workbench' | 'benchmark' | 'results' | 'config' | 'assets-aigc' | 'assets-real';
 
 const pageLabels: Record<NavKey, string> = {
+  benchmark: '测试与诊断 / LLM 压测与自检',
   workbench: '测试与诊断 / 测试工作台', results: '结果与 AI 解读',
   'assets-aigc': '素材库 / 虚拟人像（AIGC）', 'assets-real': '素材库 / 真人人像', config: '系统设置 / 配置管理',
 };
@@ -32,6 +34,7 @@ const pageLabels: Record<NavKey, string> = {
 const navigationItems: MenuProps['items'] = [
   { key: 'diagnostics', type: 'group', label: '测试与诊断', children: [
     { key: 'workbench', icon: <ExperimentOutlined />, label: '测试工作台' },
+    { key: 'benchmark', icon: <ExperimentOutlined />, label: 'LLM 压测与自检' },
   ] },
   { key: 'assets', type: 'group', label: '素材库', children: [
     { key: 'assets-aigc', icon: <PictureOutlined />, label: '虚拟人像（AIGC）' },
@@ -108,6 +111,7 @@ export const App: React.FC = () => {
         <Layout className="app-main">
           <Content className="app-content">
             <div className="app-page-context">{pageLabels[activeTab]}</div>
+            {activeTab === 'benchmark' && <BenchmarkPage config={config} />}
             {activeTab === 'assets-aigc' && <AssetsPage config={config} key="AIGC" groupType="AIGC" onNavigateToResult={handleNavigateToResult} />}
             {activeTab === 'assets-real' && <AssetsPage config={config} key="LivenessFace" groupType="LivenessFace" onNavigateToResult={handleNavigateToResult} />}
             {activeTab === 'workbench' && (
