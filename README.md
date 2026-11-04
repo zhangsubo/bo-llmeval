@@ -54,6 +54,10 @@ python3 scripts/test-openai-api.py --analyze-dir scripts/test-results/openai-vid
 python3 scripts/analyzer.py scripts/test-results/openai-video/20261014T133128Z-c2a804e4 --fallback-rules
 ```
 
+## 移动云素材库（Web）
+
+视频模型测试菜单新增「【移动云】虚拟人像（aigc）」与「【移动云】真人人像」，支持独立 OpenAPI 签名、素材与素材组管理、入库轮询及真人认证的默认/自定义回调流程。配置沿用 1Password 素材库连接组，结果独立保存。使用方式与联调边界见 [移动云素材库测试手册](docs/manual-ecloud-assets.md)。
+
 ## 火山引擎素材库（CLI / Web）
 
 新增独立工具 `python3 scripts/test-volcengine-assets.py`，支持素材/素材组的创建、查询、列表、更新、删除，以及素材入库状态轮询；真人人像支持生成 H5 认证链接、查询认证后的 GroupId 并上传素材。通过 `--endpoint` 或 `VOLC_ASSET_ENDPOINT` 指定根地址，不自动追加 `/api/v3`、`/v1` 或 `/business-api`。官方 AK/SK 签名与可选的兼容网关 Bearer 鉴权、配置和使用示例见 [素材库测试手册](docs/manual-volcengine-assets.md)。也可在 Web 左侧“素材库”分组中的“虚拟人像（AIGC）”或“真人人像”页面操作，支持真人认证链接、会话自动填入、入库轮询和历史报告。可在配置管理新增多个具名素材库配置组，分别保存根地址和 AK/SK，并在素材库页面选择使用（各组 AK/SK 独立存于 1Password）；也可临时填写凭证，仅用于当前页面请求。

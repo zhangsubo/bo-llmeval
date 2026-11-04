@@ -374,6 +374,7 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({
                   { value: 'seedance', label: 'seedance (火山方舟原生)' },
                   { value: 'bailian-video', label: '百炼原生视频' },
                   { value: 'volcengine-assets', label: '素材库 · volcengine-assets' },
+                  { value: 'ecloud-assets', label: '移动云素材库 · ecloud-assets' },
                 ],
               },
               {

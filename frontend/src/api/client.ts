@@ -378,6 +378,7 @@ export function subscribeTestRunEvents(
 }
 
 export interface AssetRunRequest {
+  provider?: 'volcengine' | 'ecloud';
   use_saved_credentials?: boolean;
   asset_profile_id?: string;
   endpoint: string;
@@ -410,7 +411,7 @@ export interface AssetRunResponse {
   };
   category: string;
   folder: string;
-  validation_session?: { h5_link: string; byted_token: string };
+  validation_session?: { h5_link: string; byted_token: string; expires_in?: number };
 }
 
 export async function runAssetRequest(payload: AssetRunRequest): Promise<AssetRunResponse> {

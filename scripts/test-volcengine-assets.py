@@ -91,7 +91,7 @@ def sanitize(value, secrets):
             value = value.replace(secret, '[REDACTED]')
             value = value.replace(json.dumps(secret)[1:-1], '[REDACTED]')
         # 素材下载链接可能含临时访问签名，不在报告中保留可用凭证。
-        value = re.sub(r'(?i)([?&](?:X-Tos-[^=&\s]+|X-Amz-[^=&\s]+|token|signature|bytedToken|accessKeyId|secretAccessKey|sessionToken|pl)=)[^&\s"<>]*',
+        value = re.sub(r'(?i)([?&](?:X-Tos-[^=&\s]+|X-Amz-[^=&\s]+|token|signature|bytedToken|accessKey|AWSAccessKeyId|accessKeyId|secretAccessKey|sessionToken|pl)=)[^&\s"<>]*',
                        r'\1[REDACTED]', value)
     return value
 

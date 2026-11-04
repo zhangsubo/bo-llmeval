@@ -7,6 +7,8 @@ import time
 from typing import Any, Literal
 import uuid
 
+from scripts import ecloud_assets
+
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError
 
 _SPEC = importlib.util.spec_from_file_location(
@@ -17,6 +19,7 @@ _SPEC.loader.exec_module(assets)
 
 class AssetRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
+    provider: Literal['volcengine', 'ecloud'] = 'volcengine'
     endpoint: str = ''
     use_saved_credentials: bool = False
     asset_profile_id: str | None = None
@@ -74,7 +77,12 @@ def run_asset_request(raw: dict, results_root: Path, config_path: Path | None = 
             ak, sk = read_credentials(credential_path(path, saved['id']))
         body.endpoint = saved['endpoint']
         body.access_key, body.secret_key = SecretStr(ak), SecretStr(sk)
-    if body.action not in assets.ACTIONS:
+    provider = ecloud_assets if body.provider == 'ecloud' else assets
+    if body.provider == 'ecloud' and (body.auth != 'aksk' or body.security_token.get_secret_value()):
+        raise ValueError('移动云仅支持 AK/SK OpenAPI 签名，不支持 Bearer 或 STS')
+    if body.wait and body.action not in ('CreateAsset', 'GetAsset'):
+        raise ValueError('仅素材上传或状态查询支持轮询')
+    if body.action not in provider.ACTIONS:
         raise ValueError('不支持的素材库操作')
     if body.action.startswith('Delete') and not body.confirm_delete:
         raise ValueError('删除操作需要明确确认')
@@ -94,17 +102,19 @@ def run_asset_request(raw: dict, results_root: Path, config_path: Path | None = 
     args.max_wait, args.poll_interval = body.max_wait, body.poll_interval
     try:
         endpoint = assets.endpoint_root(body.endpoint)
-        payload = assets.build_payload(args, initial_body=body.payload, byted_token=byted)
+        payload = (ecloud_assets.prepare(body.action, body.payload, byted) if body.provider == 'ecloud'
+                   else assets.build_payload(args, initial_body=body.payload, byted_token=byted))
     except (ValueError, TypeError, AttributeError):
         raise ValueError('请求参数无效：请检查根地址、操作必填字段、素材 URL 或认证凭证') from None
-    folder = results_root / 'volcengine-assets' / (datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ-') + uuid.uuid4().hex[:8])
+    category = 'ecloud-assets' if body.provider == 'ecloud' else 'volcengine-assets'
+    folder = results_root / category / (datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ-') + uuid.uuid4().hex[:8])
     folder.mkdir(parents=True)
     start = time.monotonic()
-    report = {'mode': 'volcengine-assets', 'action': body.action, 'success': False,
+    report = {'mode': category, 'action': body.action, 'success': False,
               'base_url': endpoint, 'endpoint': endpoint, 'auth': body.auth,
-              'started_at': datetime.now(timezone.utc).isoformat(), 'request_body': payload, 'requests': []}
+              'started_at': datetime.now(timezone.utc).isoformat(), 'request_body': payload[2] if body.provider == 'ecloud' else payload, 'requests': []}
     try:
-        assets.execute(args, endpoint, payload, credentials, report)
+        provider.execute(args, endpoint, payload, credentials, report)
         report['success'] = True
     except Exception as exc:
         report['error'] = str(exc)
@@ -113,15 +123,17 @@ def run_asset_request(raw: dict, results_root: Path, config_path: Path | None = 
         report['outcome'] = 'submitted'
     report['elapsed_ms'] = round((time.monotonic() - start) * 1000, 2)
     for row in report['requests']:
-        row.update(phase=row['action'], method='POST', body=row.get('response'),
+        row.update(phase=row['action'], method=row.get('method', 'POST'), body=row.get('response'),
                    duration_ms=round(row['elapsed_seconds'] * 1000, 2))
     safe = assets.safe_report(report, secrets)
     text = json.dumps(safe, ensure_ascii=False, indent=2)
     (folder / 'result.json').write_text(text + '\n', encoding='utf-8')
     (folder / 'summary.txt').write_text(text + '\n', encoding='utf-8')
-    response = {'report': safe, 'category': 'volcengine-assets', 'folder': folder.name}
+    response = {'report': safe, 'category': category, 'folder': folder.name}
     # 仅本次请求的响应携带会话链接；历史结果、磁盘及全局状态均不保留。
     if report['success'] and body.action == 'CreateVisualValidateSession':
         response['validation_session'] = {'h5_link': report['result']['H5Link'],
                                           'byted_token': report['result']['BytedToken']}
+        if body.provider == 'ecloud':
+            response['validation_session']['expires_in'] = report['result']['ExpiresIn']
     return response

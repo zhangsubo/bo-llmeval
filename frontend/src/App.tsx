@@ -36,6 +36,8 @@ type NavKey =
   | 'workbench-video'
   | 'assets-aigc'
   | 'assets-real'
+  | 'ecloud-assets-aigc'
+  | 'ecloud-assets-real'
   | 'workbench-image'
   | 'results'
   | 'config-general'
@@ -50,6 +52,8 @@ const SUBMENU_BY_TAB: Partial<Record<NavKey, SubMenuKey>> = {
   'workbench-video': 'group-video',
   'assets-aigc': 'group-video',
   'assets-real': 'group-video',
+  'ecloud-assets-aigc': 'group-video',
+  'ecloud-assets-real': 'group-video',
   'workbench-image': 'group-other',
   'config-general': 'group-config',
   'config-models': 'group-config',
@@ -62,6 +66,8 @@ const pageLabels: Record<NavKey, string> = {
   'workbench-video': '视频模型测试 / 视频测试工作台',
   'assets-aigc': '视频模型测试 / 虚拟人像（AIGC）',
   'assets-real': '视频模型测试 / 真人人像',
+  'ecloud-assets-aigc': '视频模型测试 / 【移动云】虚拟人像（aigc）',
+  'ecloud-assets-real': '视频模型测试 / 【移动云】真人人像',
   'workbench-image': '其他模型 / Images 图片生成',
   results: '结果解读',
   'config-general': '配置管理 / 通用配置',
@@ -88,6 +94,8 @@ const navigationItems: MenuProps['items'] = [
       { key: 'workbench-video', icon: <PlaySquareOutlined />, label: '视频测试工作台' },
       { key: 'assets-aigc', icon: <PictureOutlined />, label: '虚拟人像（AIGC）' },
       { key: 'assets-real', icon: <UserOutlined />, label: '真人人像' },
+      { key: 'ecloud-assets-aigc', icon: <PictureOutlined />, label: '【移动云】虚拟人像（aigc）' },
+      { key: 'ecloud-assets-real', icon: <UserOutlined />, label: '【移动云】真人人像' },
     ],
   },
   {
@@ -207,6 +215,8 @@ export const App: React.FC = () => {
           <Content className="app-content">
             <div className="app-page-context">{pageLabels[activeTab]}</div>
             {activeTab === 'benchmark' && <BenchmarkPage config={config} />}
+            {activeTab === 'ecloud-assets-aigc' && <AssetsPage config={config} key="ecloud-AIGC" provider="ecloud" groupType="AIGC" onNavigateToResult={handleNavigateToResult} />}
+            {activeTab === 'ecloud-assets-real' && <AssetsPage config={config} key="ecloud-LivenessFace" provider="ecloud" groupType="LivenessFace" onNavigateToResult={handleNavigateToResult} />}
             {activeTab === 'assets-aigc' && <AssetsPage config={config} key="AIGC" groupType="AIGC" onNavigateToResult={handleNavigateToResult} />}
             {activeTab === 'assets-real' && <AssetsPage config={config} key="LivenessFace" groupType="LivenessFace" onNavigateToResult={handleNavigateToResult} />}
             {activeTab === 'workbench-text' && (
