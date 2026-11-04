@@ -195,7 +195,7 @@ def load_profiles(path, required=False):
         name, sep, value = line.partition('=')
         raw_name = name.strip()
         match = re.fullmatch(r'(NAME|BASE_URL|API_KEY)([1-9][0-9]*)', raw_name)
-        is_analyzer_field = raw_name in ('ANALYZER_NAME', 'ANALYZER_BASE_URL', 'ANALYZER_API_KEY', 'ANALYZER_MODEL', 'ASSET_ENDPOINT', 'ASSET_CREDENTIAL_STORE', 'ONEPASSWORD_ACCOUNT', 'ONEPASSWORD_VAULT')
+        is_analyzer_field = raw_name in ('ANALYZER_NAME', 'ANALYZER_BASE_URL', 'ANALYZER_API_KEY', 'ANALYZER_MODEL', 'ANALYZER_AUTO', 'ASSET_ENDPOINT', 'ASSET_CREDENTIAL_STORE', 'ONEPASSWORD_ACCOUNT', 'ONEPASSWORD_VAULT')
         is_analyzer_field = is_analyzer_field or bool(re.fullmatch(r'ASSET_(ID|NAME|ENDPOINT|CREDENTIAL_STORE)[1-9][0-9]*', raw_name))
         # 错误仅打印行号，避免配置值（尤其 key）随异常泄露。
         if not sep or (not match and not is_analyzer_field) or raw_name in seen:

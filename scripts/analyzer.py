@@ -29,7 +29,7 @@ except ModuleNotFoundError:
 
 
 
-ANALYZER_FIELDS = ('ANALYZER_NAME', 'ANALYZER_BASE_URL', 'ANALYZER_API_KEY', 'ANALYZER_MODEL')
+ANALYZER_FIELDS = ('ANALYZER_NAME', 'ANALYZER_BASE_URL', 'ANALYZER_API_KEY', 'ANALYZER_MODEL', 'ANALYZER_AUTO')
 
 
 class _NoRedirect(request.HTTPRedirectHandler):
@@ -96,7 +96,7 @@ def _parse_config_line(line: str, line_number: int) -> tuple[str, str] | None:
     return key_name, value.strip()
 
 
-def load_analyzer_config(config_path: Path | None = None, *, resolve_secrets: bool = True) -> dict[str, str]:
+def load_analyzer_config(config_path: Path | None = None, *, resolve_secrets: bool = True) -> dict[str, Any]:
     """读取独立 AI 解读模型配置；环境变量 ANALYZER_* 优先于文件配置。"""
     if config_path is None:
         config_path = Path(__file__).resolve().parent / 'openai-api-config'
@@ -121,12 +121,15 @@ def load_analyzer_config(config_path: Path | None = None, *, resolve_secrets: bo
     if resolve_secrets:
         api_key = secret_store.resolve(api_key, config_path)
     model = (os.environ.get('ANALYZER_MODEL') or file_values.get('ANALYZER_MODEL') or '').strip()
+    raw_auto = (os.environ.get('ANALYZER_AUTO') or file_values.get('ANALYZER_AUTO') or '').strip().lower()
+    auto_analyze = raw_auto in ('1', 'true', 'yes', 'on')
     base_url = normalize_base_url(raw_base) if raw_base else ''
     return {
         'name': name,
         'base_url': base_url,
         'api_key': api_key,
         'model': model,
+        'auto_analyze': auto_analyze,
         'configured': bool(base_url and api_key and model),
     }
 

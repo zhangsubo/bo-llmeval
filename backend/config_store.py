@@ -151,6 +151,7 @@ def get_public_config(config_path: Path | None = None) -> dict[str, Any]:
         'model': analyzer.get('model') or '',
         'api_key_masked': mask_api_key(a_key),
         'has_key': bool(a_key),
+        'auto_analyze': bool(analyzer.get('auto_analyze', False)),
         'configured': bool(analyzer.get('configured')),
     }
     return {
@@ -249,17 +250,24 @@ def save_config(
             final_a_key = old_a_key
         else:
             final_a_key = provided_a_key
+        a_auto = (
+            bool(analyzer_input['auto_analyze'])
+            if analyzer_input.get('auto_analyze') is not None
+            else bool(old_analyzer.get('auto_analyze', False))
+        )
     else:
         a_name = old_analyzer.get('name') or 'AI 结果解读模型'
         a_base = old_analyzer.get('base_url') or ''
         a_model = old_analyzer.get('model') or ''
         final_a_key = old_analyzer.get('api_key') or ''
+        a_auto = bool(old_analyzer.get('auto_analyze', False))
 
     lines.append('# AI 结果解读专用大模型配置（独立于被测配置，支持任意 OpenAI 兼容 chat/completions 接口）')
     lines.append(f'ANALYZER_NAME={_quote_config_value(a_name)}')
     lines.append(f'ANALYZER_BASE_URL={_quote_config_value(a_base)}')
     lines.append(f'ANALYZER_API_KEY={_quote_config_value(final_a_key)}')
     lines.append(f'ANALYZER_MODEL={_quote_config_value(a_model)}')
+    lines.append(f"ANALYZER_AUTO={_quote_config_value('true' if a_auto else 'false')}")
     lines.append('')
 
     old_groups = existing['asset_profiles']

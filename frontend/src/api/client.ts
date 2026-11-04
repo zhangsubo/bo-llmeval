@@ -17,6 +17,7 @@ export interface AnalyzerConfig {
   api_key?: string;
   api_key_masked?: string;
   has_key?: boolean;
+  auto_analyze?: boolean;
   configured?: boolean;
   clear_key?: boolean;
 }
@@ -230,8 +231,8 @@ export async function fetchConfig(): Promise<AppConfig> {
 }
 
 export async function updateConfig(payload: {
-  profiles: ProfileConfig[];
-  analyzer: AnalyzerConfig;
+  profiles?: ProfileConfig[];
+  analyzer?: AnalyzerConfig;
   assets?: AssetConfig;
   asset_profiles?: AssetConfig[];
   onepassword?: { account: string; vault: string };

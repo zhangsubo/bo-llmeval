@@ -10,6 +10,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -42,7 +43,8 @@ class AnalyzerAndBackendTest(unittest.TestCase):
                 'ANALYZER_NAME="专属解读模型"\n'
                 'ANALYZER_BASE_URL="https://llm.example.com/v1/chat/completions"\n'
                 'ANALYZER_API_KEY="sk-analyzer-secret-2222"\n'
-                'ANALYZER_MODEL="deepseek-v3"\n',
+                'ANALYZER_MODEL="deepseek-v3"\n'
+                'ANALYZER_AUTO="true"\n',
                 encoding='utf-8',
             )
             profiles = self.script.load_profiles(cfg, required=True)
@@ -52,6 +54,7 @@ class AnalyzerAndBackendTest(unittest.TestCase):
 
             analyzer_cfg = self.analyzer.load_analyzer_config(cfg)
             self.assertTrue(analyzer_cfg['configured'])
+            self.assertTrue(analyzer_cfg['auto_analyze'])
             self.assertEqual(analyzer_cfg['name'], '专属解读模型')
             self.assertEqual(analyzer_cfg['base_url'], 'https://llm.example.com/v1')
             self.assertEqual(analyzer_cfg['model'], 'deepseek-v3')
@@ -338,16 +341,18 @@ class AnalyzerAndBackendTest(unittest.TestCase):
                             'base_url': '',
                             'api_key': '',
                             'model': '',
+                            'auto_analyze': True,
                         },
                     },
                 )
                 self.assertEqual(put_res.status_code, 200, put_res.text)
                 cfg_json = put_res.json()
                 self.assertEqual(len(cfg_json['profiles']), 1)
+                self.assertTrue(cfg_json['analyzer']['auto_analyze'])
                 self.assertEqual(cfg_json['profiles'][0]['api_key_masked'], '••••（1Password）')
                 self.assertNotIn('sk-target-secret-9999', json.dumps(cfg_json))
 
-                # 再次保存时不传 api_key，应自动保留原 key
+                # 再次保存时不传 api_key 与 analyzer，应自动保留原 key 与 auto_analyze
                 put_res2 = client.put(
                     '/api/config',
                     json={
@@ -363,6 +368,7 @@ class AnalyzerAndBackendTest(unittest.TestCase):
                 )
                 self.assertEqual(put_res2.status_code, 200)
                 self.assertEqual(put_res2.json()['profiles'][0]['api_key_masked'], '••••（1Password）')
+                self.assertTrue(put_res2.json()['analyzer']['auto_analyze'])
 
                 # 2. 通过后端接口启动一次测试并等待完成
                 run_res = client.post(
@@ -405,6 +411,29 @@ class AnalyzerAndBackendTest(unittest.TestCase):
         finally:
             server.shutdown()
             server.server_close()
+
+    def test_create_app_supports_worktree_env_overrides(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            cfg_path = tmp / 'shared-config'
+            res_root = tmp / 'worktree-results'
+            cfg_path.write_text('NAME1="共享配置"\nBASE_URL1="https://api.example.com/v1"\nAPI_KEY1="op://Vault/Item/credential"\n', encoding='utf-8')
+            res_root.mkdir(parents=True)
+            with patch.dict(
+                'os.environ',
+                {
+                    'BO_LLMEVAL_CONFIG_PATH': str(cfg_path),
+                    'BO_LLMEVAL_RESULTS_ROOT': str(res_root),
+                },
+            ):
+                app = create_app()
+                client = TestClient(app)
+                health = client.get('/api/health').json()
+                self.assertEqual(health['config_path'], str(cfg_path))
+                self.assertEqual(health['results_root'], str(res_root))
+                cfg_data = client.get('/api/config').json()
+                self.assertEqual(len(cfg_data['profiles']), 1)
+                self.assertEqual(cfg_data['profiles'][0]['name'], '共享配置')
 
 
 if __name__ == '__main__':

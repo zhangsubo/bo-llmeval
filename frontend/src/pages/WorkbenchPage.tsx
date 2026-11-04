@@ -32,6 +32,7 @@ import {
   DeleteOutlined,
   VideoCameraOutlined,
   MessageOutlined,
+  PictureOutlined,
   ThunderboltOutlined,
 } from '@ant-design/icons';
 import {
@@ -47,29 +48,54 @@ import { MarkdownViewer } from '../components/MarkdownViewer';
 const { Text } = Typography;
 const { TextArea } = Input;
 
-const DEFAULT_MODELS = [
-  'wanx-v2',
-  'cogview-4',
-  'cogview-3-plus',
-  'qwen-image-3.0',
-  'wan2.7-t2v-2026-06-12',
-  'wan2.6-i2v-flash',
-  'doubao-seedance-2.0',
-  'doubao-seedance-2.5',
-  'qwen3.7-plus',
-  'qwen3.8-max',
-  'kimi-k3',
-];
+export type WorkbenchScope = 'text' | 'video' | 'image';
+export type ApiType =
+  | 'chat/completions'
+  | 'responses'
+  | 'video'
+  | 'seedance'
+  | 'images/generations'
+  | 'bailian-video';
 
-const DEFAULT_MODEL_OPTIONS = DEFAULT_MODELS.map((m) => ({
-  value: m,
-  label: m,
-}));
+const SCOPE_PROTOCOLS: Record<WorkbenchScope, ApiType[]> = {
+  text: ['chat/completions', 'responses'],
+  video: ['video', 'seedance', 'bailian-video'],
+  image: ['images/generations'],
+};
+
+const SCOPE_MODELS: Record<WorkbenchScope, string[]> = {
+  text: ['qwen3.7-plus', 'qwen3.8-max', 'kimi-k3'],
+  video: [
+    'doubao-seedance-2.0',
+    'doubao-seedance-2.5',
+    'wan2.7-t2v-2026-06-12',
+    'wan2.6-i2v-flash',
+  ],
+  image: ['wanx-v2', 'cogview-4', 'cogview-3-plus', 'qwen-image-3.0'],
+};
+
+const SCOPE_TITLES: Record<WorkbenchScope, string> = {
+  text: '文字模型 API 诊断测试',
+  video: '视频模型 API 诊断测试',
+  image: '图片生成 API 诊断测试',
+};
+
+const SCOPE_MODEL_PLACEHOLDERS: Record<WorkbenchScope, string> = {
+  text: '请选择或输入文字模型（如 qwen3.7-plus / qwen3.8-max / kimi-k3）',
+  video: '请选择或输入视频模型 / 推理接入点（如 doubao-seedance-2.0 / wan2.7-t2v-2026-06-12）',
+  image: '请选择或输入图片生成模型（如 qwen-image-3.0 / cogview-4 / wanx-v2）',
+};
+
+const SCOPE_SAMPLE_PROMPTS: Record<WorkbenchScope, string> = {
+  text: '你好！请用三句话简要介绍你自己。',
+  video: '一只橘猫在阳光下的花园草地上奔跑，镜头跟随，电影感画质',
+  image: '一座漂浮在云海之上的未来生态花园城市，清晨柔和金光，超高清细节，电影级构图',
+};
 
 export interface WorkbenchPreset {
   video_request_format?: 'default' | 'alibaba';
   video_query_api?: 'generations' | 'videos';
-  api_type?: 'chat/completions' | 'responses' | 'video' | 'seedance' | 'images/generations' | 'bailian-video';
+  api_type?: ApiType;
   task_id?: string;
   action?: 'create' | 'query' | 'list' | 'delete';
   model?: string;
@@ -78,6 +104,7 @@ export interface WorkbenchPreset {
 }
 
 interface WorkbenchPageProps {
+  scope?: WorkbenchScope;
   config: AppConfig | null;
   preset?: WorkbenchPreset | null;
   onClearPreset?: () => void;
@@ -85,18 +112,26 @@ interface WorkbenchPageProps {
 }
 
 export const WorkbenchPage: React.FC<WorkbenchPageProps> = ({
+  scope = 'text',
   config,
   preset,
   onClearPreset,
   onNavigateToResult,
 }) => {
+  const allowedProtocols = SCOPE_PROTOCOLS[scope];
+  const scopeModels = SCOPE_MODELS[scope];
+  const scopeModelOptions = scopeModels.map((m) => ({ value: m, label: m }));
+
   const [profileId, setProfileId] = useState<number | 'custom'>(1);
   const [customBaseUrl, setCustomBaseUrl] = useState('');
   const [customApiKey, setCustomApiKey] = useState('');
   const [overrideBaseUrl, setOverrideBaseUrl] = useState('');
-  const [apiType, setApiType] = useState<'chat/completions' | 'responses' | 'video' | 'seedance' | 'images/generations' | 'bailian-video'>(
-    'chat/completions'
+  const [apiType, setApiType] = useState<ApiType>(() =>
+    preset?.api_type && allowedProtocols.includes(preset.api_type)
+      ? preset.api_type
+      : allowedProtocols[0]
   );
+  const skipBaseUrlSyncRef = useRef(false);
   const [model, setModel] = useState('');
   const [prompt, setPrompt] = useState('');
   const [stream, setStream] = useState(true);
@@ -142,13 +177,22 @@ export const WorkbenchPage: React.FC<WorkbenchPageProps> = ({
   const [filterModel, setFilterModel] = useState<string>('');
   const [filterTaskIds, setFilterTaskIds] = useState<string>('');
 
-  // 超时与 AI 解读设置
+  // 超时与 AI 解读设置（默认继承「通用配置」中的自动解读开关）
   const [pollInterval, setPollInterval] = useState<number>(5);
   const [requestTimeout, setRequestTimeout] = useState<number>(120);
   const [downloadTimeout, setDownloadTimeout] = useState<number>(300);
   const [maxWait, setMaxWait] = useState<number>(1800);
-  const [autoAnalyze, setAutoAnalyze] = useState<boolean>(false);
+  const [autoAnalyze, setAutoAnalyze] = useState<boolean>(() =>
+    Boolean(config?.analyzer?.auto_analyze)
+  );
+  const autoAnalyzeTouchedRef = useRef(false);
   const [c2paCheck, setC2paCheck] = useState(false);
+
+  useEffect(() => {
+    if (!autoAnalyzeTouchedRef.current && config?.analyzer?.auto_analyze !== undefined) {
+      setAutoAnalyze(Boolean(config.analyzer.auto_analyze));
+    }
+  }, [config?.analyzer?.auto_analyze]);
 
   // 运行状态
   const [currentRun, setCurrentRun] = useState<TestRunSnapshot | null>(null);
@@ -198,6 +242,10 @@ export const WorkbenchPage: React.FC<WorkbenchPageProps> = ({
   }, [config]);
 
   useEffect(() => {
+    if (skipBaseUrlSyncRef.current) {
+      skipBaseUrlSyncRef.current = false;
+      return;
+    }
     if (profileId !== 'custom') {
       setOverrideBaseUrl(computeDefaultBaseUrl(profileId, apiType));
     }
@@ -205,7 +253,9 @@ export const WorkbenchPage: React.FC<WorkbenchPageProps> = ({
 
   useEffect(() => {
     if (preset) {
-      if (preset.api_type) setApiType(preset.api_type);
+      if (preset.api_type && allowedProtocols.includes(preset.api_type)) {
+        setApiType(preset.api_type);
+      }
       setVideoRequestFormat(preset.video_request_format || 'default');
       setVideoQueryApi(preset.video_query_api || 'generations');
       if (preset.model) setModel(preset.model);
@@ -224,6 +274,10 @@ export const WorkbenchPage: React.FC<WorkbenchPageProps> = ({
             p.base_url === preset.base_url ||
             (preset.base_url?.endsWith('/api/v3') &&
               p.base_url.replace(/\/v1\/?$/, '/api/v3') === preset.base_url)
+        );
+        skipBaseUrlSyncRef.current = Boolean(
+          (matched?.id && matched.id !== profileId) ||
+            (preset.api_type && preset.api_type !== apiType)
         );
         if (matched && matched.id) {
           setProfileId(matched.id);
@@ -274,7 +328,7 @@ export const WorkbenchPage: React.FC<WorkbenchPageProps> = ({
         download_timeout: downloadTimeout,
         max_wait: maxWait,
         auto_analyze: autoAnalyze,
-        c2pa_check: c2paCheck,
+        c2pa_check: scope === 'video' ? c2paCheck : false,
       };
 
       if (apiType === 'video') {
@@ -453,7 +507,7 @@ export const WorkbenchPage: React.FC<WorkbenchPageProps> = ({
           title={
             <Space>
               <ThunderboltOutlined style={{ color: '#1677ff' }} />
-              <span>API 诊断测试参数配置</span>
+              <span>{SCOPE_TITLES[scope]}</span>
             </Space>
           }
           extra={
@@ -461,12 +515,22 @@ export const WorkbenchPage: React.FC<WorkbenchPageProps> = ({
               <Text type="secondary" style={{ fontSize: 13 }}>
                 完成后自动 AI 解读
               </Text>
-              <Switch checked={autoAnalyze} onChange={setAutoAnalyze} />
+              <Switch
+                checked={autoAnalyze}
+                onChange={(checked) => {
+                  autoAnalyzeTouchedRef.current = true;
+                  setAutoAnalyze(checked);
+                }}
+              />
             </Space>
           }
         >
           <Form layout="vertical">
-            <Form.Item label="视频下载后检测 C2PA（缺失仅提示）"><Switch checked={c2paCheck} onChange={setC2paCheck} /></Form.Item>
+            {scope === 'video' && (
+              <Form.Item label="视频下载后检测 C2PA（缺失仅提示）">
+                <Switch checked={c2paCheck} onChange={setC2paCheck} />
+              </Form.Item>
+            )}
             {/* 1. 选择配置组 */}
             <Form.Item label="1. 选择 API 凭证配置（Base URL 与 API Key 成对使用）">
               <Select
@@ -509,27 +573,49 @@ export const WorkbenchPage: React.FC<WorkbenchPageProps> = ({
             )}
 
             {/* 2. 选择接口类型 */}
-            <Form.Item label="2. 选择测试接口协议">
+            <Form.Item
+              label={
+                scope === 'text'
+                  ? '2. 选择文字模型接口协议'
+                  : scope === 'video'
+                  ? '2. 选择视频模型接口协议'
+                  : '2. 当前测试接口协议'
+              }
+            >
               <Radio.Group
                 value={apiType}
                 onChange={(e) => setApiType(e.target.value)}
                 buttonStyle="solid"
                 style={{ width: '100%' }}
               >
-                <Radio.Button value="chat/completions">
-                  <MessageOutlined /> 1. chat/completions
-                </Radio.Button>
-                <Radio.Button value="responses">
-                  <MessageOutlined /> 2. responses
-                </Radio.Button>
-                <Radio.Button value="video">
-                  <VideoCameraOutlined /> 3. video (兼容视频)
-                </Radio.Button>
-                <Radio.Button value="seedance">
-                  <VideoCameraOutlined /> 4. seedance (火山方舟原生)
-                </Radio.Button>
-                <Radio.Button value="images/generations">5. Images 图片生成</Radio.Button>
-                <Radio.Button value="bailian-video">6. 百炼原生视频</Radio.Button>
+                {scope === 'text' && (
+                  <>
+                    <Radio.Button value="chat/completions">
+                      <MessageOutlined /> 1. chat/completions
+                    </Radio.Button>
+                    <Radio.Button value="responses">
+                      <MessageOutlined /> 2. responses
+                    </Radio.Button>
+                  </>
+                )}
+                {scope === 'video' && (
+                  <>
+                    <Radio.Button value="video">
+                      <VideoCameraOutlined /> 1. video (兼容视频)
+                    </Radio.Button>
+                    <Radio.Button value="seedance">
+                      <VideoCameraOutlined /> 2. seedance (火山方舟原生)
+                    </Radio.Button>
+                    <Radio.Button value="bailian-video">
+                      <VideoCameraOutlined /> 3. 百炼原生视频
+                    </Radio.Button>
+                  </>
+                )}
+                {scope === 'image' && (
+                  <Radio.Button value="images/generations">
+                    <PictureOutlined /> images/generations (Images 图片生成)
+                  </Radio.Button>
+                )}
               </Radio.Group>
             </Form.Item>
 
@@ -551,7 +637,13 @@ export const WorkbenchPage: React.FC<WorkbenchPageProps> = ({
                 <Input
                   value={overrideBaseUrl}
                   onChange={(e) => setOverrideBaseUrl(e.target.value)}
-                  placeholder="https://token.peopleopen.cn/api/v3"
+                  placeholder={
+                    apiType === 'seedance'
+                      ? 'https://ark.cn-beijing.volces.com/api/v3'
+                      : apiType === 'bailian-video'
+                      ? 'https://dashscope.aliyuncs.com/api/v1'
+                      : 'https://api.openai.com/v1'
+                  }
                 />
               </Form.Item>
             )}
@@ -734,22 +826,22 @@ export const WorkbenchPage: React.FC<WorkbenchPageProps> = ({
             {isNewRequest && (
               <>
                 <Row gutter={12}>
-                  <Col xs={24} md={isVideo ? 24 : 16}>
+                  <Col xs={24} md={isVideo || isImage ? 24 : 16}>
                     <Form.Item label="3. Model ID / 推理接入点 ID" required>
                       <AutoComplete
                         allowClear
                         value={model}
                         onChange={(val) => setModel(val)}
-                        options={DEFAULT_MODEL_OPTIONS}
+                        options={scopeModelOptions}
                         filterOption={(inputValue, option) => {
-                          if (!inputValue || DEFAULT_MODELS.includes(inputValue)) {
+                          if (!inputValue || scopeModels.includes(inputValue)) {
                             return true;
                           }
                           return (
                             option?.value.toLowerCase().includes(inputValue.toLowerCase()) ?? false
                           );
                         }}
-                        placeholder="请选择或输入模型（如 doubao-seedance-2.0 / qwen3.7-plus / kimi-k3）"
+                        placeholder={SCOPE_MODEL_PLACEHOLDERS[scope]}
                         style={{ width: '100%' }}
                       />
                     </Form.Item>
@@ -1025,13 +1117,7 @@ export const WorkbenchPage: React.FC<WorkbenchPageProps> = ({
                       <Button
                         size="small"
                         type="link"
-                        onClick={() =>
-                          setPrompt(
-                            isVideo
-                              ? '一只橘猫在阳光下的花园草地上奔跑，镜头跟随，电影感画质'
-                              : '你好！请用三句话简要介绍你自己。'
-                          )
-                        }
+                        onClick={() => setPrompt(SCOPE_SAMPLE_PROMPTS[scope])}
                       >
                         填入示例提示词
                       </Button>
@@ -1055,20 +1141,27 @@ export const WorkbenchPage: React.FC<WorkbenchPageProps> = ({
               items={[
                 {
                   key: 'advanced',
-                  label: '高级网络超时与轮询间隔参数',
+                  label:
+                    scope === 'video'
+                      ? '高级网络超时与轮询间隔参数'
+                      : scope === 'image'
+                      ? '高级网络与下载超时参数'
+                      : '高级网络超时参数',
                   children: (
                     <Row gutter={12}>
-                      <Col xs={12} md={6}>
-                        <Form.Item label="轮询间隔 (秒)">
-                          <InputNumber
-                            min={1}
-                            value={pollInterval}
-                            onChange={(v) => setPollInterval(v || 5)}
-                            style={{ width: '100%' }}
-                          />
-                        </Form.Item>
-                      </Col>
-                      <Col xs={12} md={6}>
+                      {scope === 'video' && (
+                        <Col xs={12} md={6}>
+                          <Form.Item label="轮询间隔 (秒)">
+                            <InputNumber
+                              min={1}
+                              value={pollInterval}
+                              onChange={(v) => setPollInterval(v || 5)}
+                              style={{ width: '100%' }}
+                            />
+                          </Form.Item>
+                        </Col>
+                      )}
+                      <Col xs={12} md={scope === 'video' ? 6 : 12}>
                         <Form.Item label="单次请求超时 (秒)">
                           <InputNumber
                             min={1}
@@ -1078,26 +1171,30 @@ export const WorkbenchPage: React.FC<WorkbenchPageProps> = ({
                           />
                         </Form.Item>
                       </Col>
-                      <Col xs={12} md={6}>
-                        <Form.Item label="视频下载超时 (秒)">
-                          <InputNumber
-                            min={5}
-                            value={downloadTimeout}
-                            onChange={(v) => setDownloadTimeout(v || 300)}
-                            style={{ width: '100%' }}
-                          />
-                        </Form.Item>
-                      </Col>
-                      <Col xs={12} md={6}>
-                        <Form.Item label="总等待上限 (秒)">
-                          <InputNumber
-                            min={5}
-                            value={maxWait}
-                            onChange={(v) => setMaxWait(v || 1800)}
-                            style={{ width: '100%' }}
-                          />
-                        </Form.Item>
-                      </Col>
+                      {(scope === 'video' || scope === 'image') && (
+                        <Col xs={12} md={scope === 'video' ? 6 : 12}>
+                          <Form.Item label={scope === 'image' ? '图片下载超时 (秒)' : '视频下载超时 (秒)'}>
+                            <InputNumber
+                              min={5}
+                              value={downloadTimeout}
+                              onChange={(v) => setDownloadTimeout(v || 300)}
+                              style={{ width: '100%' }}
+                            />
+                          </Form.Item>
+                        </Col>
+                      )}
+                      {scope === 'video' && (
+                        <Col xs={12} md={6}>
+                          <Form.Item label="总等待上限 (秒)">
+                            <InputNumber
+                              min={5}
+                              value={maxWait}
+                              onChange={(v) => setMaxWait(v || 1800)}
+                              style={{ width: '100%' }}
+                            />
+                          </Form.Item>
+                        </Col>
+                      )}
                     </Row>
                   ),
                 },
@@ -1161,7 +1258,7 @@ export const WorkbenchPage: React.FC<WorkbenchPageProps> = ({
                 icon={<EyeOutlined />}
                 onClick={() => onNavigateToResult(currentRun.category, currentRun.folder!)}
               >
-                在结果中心查看完整报告
+                在结果解读查看完整报告
               </Button>
             )
           }

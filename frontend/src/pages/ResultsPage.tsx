@@ -354,18 +354,34 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({
           }}
         >
           <Select
-            style={{ width: 180 }}
+            style={{ width: 220 }}
             value={categoryFilter}
             onChange={setCategoryFilter}
             options={[
               { value: 'all', label: '全部接口目录' },
-              { value: 'chat-completions', label: 'chat-completions' },
-              { value: 'responses', label: 'responses' },
-              { value: 'openai-video', label: 'openai-video' },
-              { value: 'seedance', label: 'seedance' },
-              { value: 'images-generations', label: 'Images 图片生成' },
-              { value: 'bailian-video', label: '百炼原生视频' },
-              { value: 'volcengine-assets', label: '素材库 · volcengine-assets' },
+              {
+                label: '文字模型测试',
+                options: [
+                  { value: 'chat-completions', label: 'chat/completions' },
+                  { value: 'responses', label: 'responses' },
+                  { value: 'benchmark', label: 'LLM 压测与自检 (benchmark)' },
+                ],
+              },
+              {
+                label: '视频模型测试',
+                options: [
+                  { value: 'openai-video', label: 'video (兼容视频)' },
+                  { value: 'seedance', label: 'seedance (火山方舟原生)' },
+                  { value: 'bailian-video', label: '百炼原生视频' },
+                  { value: 'volcengine-assets', label: '素材库 · volcengine-assets' },
+                ],
+              },
+              {
+                label: '其他模型',
+                options: [
+                  { value: 'images-generations', label: 'Images 图片生成' },
+                ],
+              },
             ]}
           />
           <Select

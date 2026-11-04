@@ -10,6 +10,7 @@
 .app-brand span { display: block; margin-top: 3px; font-size: 11px; letter-spacing: 0.12em; color: oklch(0.55 0.02 250); }
 .app-navigation { flex: 1; min-height: 0; overflow-y: auto; }
 .app-navigation .ant-menu { background: transparent; border-inline-end: none !important; }
+.app-navigation .ant-menu-sub.ant-menu-inline { background: transparent !important; }
 .app-navigation .ant-menu-item-group-title { padding: 20px 24px 8px; font-size: 12px; }
 .app-sidebar-footer { padding: 16px 12px; border-top: 1px solid oklch(0.92 0.008 250); }
 .app-analyzer-link { max-width: 100%; }

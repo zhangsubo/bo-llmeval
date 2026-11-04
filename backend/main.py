@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from pathlib import Path
 import queue
 import threading
@@ -47,6 +48,7 @@ class AnalyzerConfigInput(BaseModel):
     base_url: str = ''
     api_key: str = ''
     model: str = ''
+    auto_analyze: bool | None = None
     clear_key: bool = False
 
 
@@ -87,8 +89,10 @@ def create_app(
     config_path: Path | None = None,
     results_root: Path | None = None,
 ) -> FastAPI:
-    cfg_path = config_path or DEFAULT_CONFIG_PATH
-    res_root = results_root or DEFAULT_RESULTS_ROOT
+    env_cfg = os.environ.get('BO_LLMEVAL_CONFIG_PATH', '').strip()
+    env_res = os.environ.get('BO_LLMEVAL_RESULTS_ROOT', '').strip()
+    cfg_path = config_path or (Path(env_cfg).expanduser() if env_cfg else DEFAULT_CONFIG_PATH)
+    res_root = results_root or (Path(env_res).expanduser() if env_res else DEFAULT_RESULTS_ROOT)
     run_manager = TestRunManager(config_path=cfg_path, results_root=res_root)
     benchmark_manager = BenchmarkManager(cfg_path, res_root)
 
